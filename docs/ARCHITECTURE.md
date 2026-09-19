@@ -2,141 +2,125 @@
 
 ## Overview
 
-EMUNEL is a production evolution of the [Lunel](https://github.com/ArasTey/lunel)
-proxy platform. The networking core is Lunel's proven engine, ported verbatim
-(wire-compatible); EMUNEL adds the management layer, subscription system,
-monitoring, diagnostics and the glass console UI on top.
+EMUNEL is a control-plane / data-plane system with three components:
 
 ```
-                ┌─────────────────────────────────────────────────┐
-                │                EMUNEL PROCESS                    │
-   Browser ────▶│  dashboard/ (SPA, vanilla ES modules)          │
-                │  emunel_api  (FastAPI console, JWT + RBAC)      │
-                │      │                                          │
-                │      ├── InstanceManager ──┐ subprocess + rlimits
-                │      │   (ports, tokens,    │ per instance        │
-                │      │    registry)         ▼                    │
-                │      │               emunel_core #1  ── relay ──▶ internet
-                │      │               emunel_core #2  ── relay ──▶ internet
-                │      │                  ...                     │
-                │      ├── LinkSync worker (policy push,          │
-                │      │    batched traffic pull)                 │
-                │      └── Diagnostics (on-demand, bounded)        │
-                │  SQLite / PostgreSQL                             │
-                └─────────────────────────────────────────────────┘
+                        ┌────────────────────────────────────────────┐
+                        │                EMUNEL CONSOLE               │
+   Browser ────────────▶│  frontend (SPA) ── Console API (FastAPI)   │
+                        │        PostgreSQL      │      │            │
+                        └────────────────────────┼──────┼────────────┘
+                             GitHub OAuth        │      │ heartbeat /
+                             sessions            │ deploy│ metrics
+                                                 ▼      ▼
+                        ┌────────────────────────────────────────────┐
+                        │                 EMUNEL WORKER               │
+                        │  scheduler-facing API · drivers · ws-proxy │
+                        └───────────────┬────────────────────────────┘
+                                        │ launch / stop / proxy
+                                        ▼
+                        ┌────────────────────────────────────────────┐
+                        │  EMUNEL CORE instances (isolated per user)  │
+                        │  VLESS / Trojan / Shadowsocks over WS+xHTTP│
+                        └───────────────┬────────────────────────────┘
+                                        │ relay
+                                        ▼
+                                  destination hosts
 ```
 
-## The Core (ported from Lunel, unchanged wire behavior)
+Public traffic from proxy clients takes one hop:
 
-`core/emunel_core/` — an isolated, self-contained proxy runtime. Each EMUNEL
-Instance launches one Core subprocess with its own:
+```
+client ──▶ https://<console>/i/<endpoint-token>/ws/<uuid> ──▶ gateway ──▶
+             worker ws-proxy ──▶ core /ws/<uuid> ──▶ destination
+```
 
-- loopback port and management token (`EMUNEL_CORE_API_TOKEN`)
-- JSON state file (atomic writes, debounced — links, quotas, counters)
-- resource budget (RLIMIT_AS with a 512 MB VA floor, RLIMIT_CPU, RLIMIT_FSIZE)
+The gateway authenticates by endpoint token (un guessable, rotatable,
+per-instance), so no port mapping or per-instance DNS is required on
+platforms exposing a single HTTP endpoint. On wildcard-DNS self-hosted
+setups the same path is additionally reachable as a real hostname via the
+bundled Caddy.
 
-### Wire surface
+## EMUNEL Core
 
-| Route | Protocol | Transport |
-|---|---|---|
-| `WS /ws/{uuid}` | VLESS | WebSocket |
-| `WS /trojan-ws` | Trojan (SHA-224 password handshake) | WebSocket |
-| `WS /ss-ws` | Shadowsocks AEAD (EVP_BytesToKey + HKDF-SHA1) | WebSocket |
-| `WS /vmess-ws/{uuid}` | VMess AEAD via pinned Xray runtime (opt-in) | WebSocket |
-| `POST /xhttp-siz10/{mode}/{uuid}/{session}[/seq]` | VLESS | xHTTP packet-up / stream-up |
-| `POST /txhttp-siz10/...` | Trojan | xHTTP |
-| `GET /health /ready /version` | health | HTTP |
-| `/core/api/*` | management | HTTP + bearer token |
-
-### Security invariants (preserved from the reference)
-
-1. **Fail-closed credentials** — unknown, disabled, expired or over-quota links
-   cannot open an outbound connection. An empty state file is a dead relay,
-   never an open proxy.
-2. **QuotaGate EWMA batching** — quota locks are taken adaptively
-   (32 KiB–2 MiB batches), not per frame; traffic accounting never blocks the
-   relay on disk I/O.
-3. **Session keying `(uuid, session_id)`** in xHTTP — a valid link can never
-   attach to another link's stream; global/per-link session caps and body caps
-   bound memory.
-4. **Secret redaction** — every log record passes a redaction filter; the
-   management token and SS passwords never appear in API responses or logs.
-5. **Protocol matrix is fixed** — only the combinations above exist; the UI's
-   instance builder validates against this exact set.
-
-## The Console (`api/emunel_api/`)
-
-FastAPI + SQLAlchemy async (SQLite by default, PostgreSQL for scale).
+Derived from RVG's relay engine (wire-compatible), restructured:
 
 | Module | Responsibility |
 |---|---|
-| `routers/v1/instances.py` | instance CRUD + lifecycle (start/stop/restart) + links + share URLs |
-| `routers/v1/subscriptions.py` | plans: quota, expiry (1/7/30/60/90/custom days), extend, renew, revoke, reset |
-| `routers/v1/traffic.py` | per-instance / per-subscription / top-links usage from synced counters + live cores |
-| `routers/v1/analytics.py` | overview, protocol distribution, subscription status, hourly buckets |
-| `routers/v1/connections.py` | live connections grouped by client IP, merged across instances |
-| `routers/v1/network_tests.py` | the diagnostics subsystem (below) |
-| `routers/v1/logs.py` | audit trail (DB) + live Core ring-buffer logs |
-| `routers/v1/health.py` | independent component health states |
-| `services/instance_manager.py` | subprocess driver: port allocation with bind-probe + ownership proof, durable registry, restart recovery |
-| `services/core_client.py` | typed `/core/api/*` client (token stays inside the module) |
-| `services/link_sync.py` | the subscription ↔ Core bridge (below) |
-| `services/diagnostics.py` | real measurement probes |
-| `services/health.py` | liveness / readiness / database / instances / manager / sync |
+| `relay/base.py` | `RelayContext` (explicit dependency object, no panel globals), adaptive `QuotaGate` (EWMA batched quota accounting), socket tuning, pump helpers |
+| `relay/vless.py` | VLESS header parse/build, `/ws/{uuid}` tunnel (credential check on first frame) |
+| `relay/trojan.py` | Trojan SHA-224 handshake, `/trojan-ws` tunnel |
+| `relay/shadowsocks.py` | EVP_BytesToKey + HKDF-SHA1 + streaming AEAD, `/ss-ws`, link identification by successful decryption |
+| `relay/xhttp.py` | **One** xHTTP engine (RVG had two 95%-duplicated ones) serving `/xhttp-siz10/*` (VLESS) and `/txhttp-siz10/*` (Trojan): packet-up with ordered seq replay, stream-up with AIMD adaptive drain, queue-fed downlink, idle reaper |
+| `state.py` | `LinkStore` / `ConnectionTracker` / `RuntimeStats` with explicit locks; atomic JSON persistence with debounced saves (corrupt files are quarantined, never crash boot) |
+| `app.py` | Route assembly; management API guarded by `EMUNEL_CORE_API_TOKEN` bearer auth |
 
-### Subscription ↔ Core bridge
+Security properties relative to RVG:
 
-The Core is the enforcement point — the console never second-guesses a relay
-decision and never bypasses the Core quota system:
+1. Sessions keyed `(uuid, session_id)` — closes the cross-link session attachment hole.
+2. `MAX_SESSIONS_GLOBAL` / `MAX_SESSIONS_PER_LINK` / seq-buffer caps / body caps.
+3. UUID credential match verified in the first WS frame for VLESS.
+4. All errors go through the redacting logger; ring buffer keeps the last 500 lines for the Console log viewer.
 
-1. Creating a subscription (optionally bound to an instance + protocol)
-   provisions Link rows and pushes them into the target Core's link registry.
-2. Quota (`traffic_limit_gb`), expiry and revocation changes are pushed onto
-   the bound links; the Core refuses them at connection time fail-closed.
-3. A background worker (default every 10 s) pulls per-link counters from each
-   running Core, updates only changed rows, aggregates onto subscriptions, and
-   applies lifecycle transitions: `ACTIVE → EXPIRED | QUOTA_EXCEEDED | DISABLED`
-   (auto-disable configurable), monthly resets on `reset_day`.
-4. `GET /sub/{link_token}` serves the standard base64 subscription feed with
-   `subscription-userinfo` headers for client-side usage display.
+Core exposes exactly two kinds of endpoints:
 
-### Traffic accounting efficiency
+- **Public/unauthenticated:** `/health`, `/ready`, `/version` and the protocol transports (protocol credentials are the authentication).
+- **Management** (`/core/api/*`): bearer-token only. The token is generated per instance by the Console, handed to the Worker at launch, and never returned by any Console API.
 
-- The Core already batches per-link accounting in memory (EWMA QuotaGate) and
-  persists debounced — no per-packet disk writes.
-- The console polls at a low frequency (10 s) and writes only changed rows.
-- 64-bit counters everywhere (a 32-bit column overflows at 4 GiB).
+## EMUNEL Console
 
-## Diagnostics (real measurements only)
+FastAPI + asyncpg. Migrations are plain SQL applied in order and tracked in
+`schema_migrations`.
 
-Every latency shown anywhere in EMUNEL is a measured `time.monotonic()` delta
-around an actual operation. Latency types are labelled and never conflated:
-`server` (API /health RTT), `tcp_connect`, `tls_handshake` (incl. SNI + cert),
-`ws_tunnel` (upgrade completion), `e2e`. Probes: DNS, TCP, TLS/SNI, HTTP,
-WebSocket (+ ping RTT), gRPC-style HTTP2 probe, xHTTP route probe, and a staged
-chain. All probes are on-demand only, bounded by a per-probe timeout (6 s),
-a global concurrency semaphore (8), and a per-user token bucket
-(20 burst / 30 per minute).
+Entities: `users`, `sessions`, `instances`, `instance_configs`, `deployments`,
+`deployment_logs`, `domains`, `metrics`, `activity_events`, `workers`,
+`oauth_states`.
 
-## Health model
+Key flows:
 
-Independent states — one failed subsystem never marks the whole platform
-broken: `liveness`, `readiness`, `database`, `instances` (per-instance Core
-probes), `manager`, `sync` (poller freshness). The dashboard renders a badge
-per component and the overview degrades, not dies.
+- **Auth** — GitHub OAuth code flow with single-use server-side state;
+  opaque session tokens (SHA-256 hashed at rest), HttpOnly + SameSite=Lax
+  cookies; mutations additionally require the `X-EMUNEL-CSRF` header (the
+  session token itself — unreadable to other origins by construction).
+- **Deploy pipeline** (`services/deployments.py`) — background task per
+  deployment, real transitions only:
+  `QUEUED → PREPARING → BUILDING → STARTING → HEALTH_CHECK → RUNNING|FAILED`.
+  Failure cleans up the half-launched instance on the worker.
+- **Gateway** (`services/gateway.py`) — endpoint-token lookup → worker HTTP
+  proxy for management/data paths; frame-level WS relay (client ⇄ gateway ⇄
+  worker `ws-proxy` ⇄ Core) because HTTP clients cannot pass an Upgrade
+  through.
+- **Providers** — `local` (Worker) is default; `railway` (per-instance
+  service + generated domain) activates automatically when Railway
+  credentials are present. Unified deployments use `local` with the console
+  running as the single public service when provider credentials are absent.
+
+## EMUNEL Worker
+
+- **Drivers** share one interface: `DockerDriver` (production: `--cpus`,
+  `--memory`, `--pids-limit`, `--cap-drop ALL`, `no-new-privileges`,
+  read-only rootfs, non-root UID, private network, loopback-only port
+  publish) and `ProcessDriver` (dev: `RLIMIT_AS`/`RLIMIT_CPU`/`RLIMIT_FSIZE`,
+  own session, per-instance data dir, own venv).
+- **Heartbeat** posts node CPU/RAM/disk/instance-count/capacity to the
+  Console (`/api/internal/heartbeat`); the Console marks stale workers
+  offline and the admin panel can disable them.
+- **Auth** — single shared `EMUNEL_WORKER_TOKEN`; the worker never sees the
+  Docker socket mounted into instances, and instances never see the worker
+  token.
 
 ## Frontend
 
-`dashboard/` — vanilla ES modules, hash router, no build step, no framework,
-no CDN. Views are lazy-loaded (`import()`); per-view pollers pause when the
-tab is hidden. Glass styling is applied only to nav/cards/dialogs (bounded
-`backdrop-filter` — no blur on scroll containers). Full i18n (English +
-فارسی) with `dir=rtl`. Empty/loading/error states everywhere; every metric
-comes from the live API — no simulated values.
+Vanilla ES modules (no framework, no build step, no CDN): hash router,
+design-system CSS (dark-first, moon-silver accent), API client with CSRF
+header, live log terminal with search/pause/download, polling dashboards
+that accelerate only while states are transitioning. Works on mobile via a
+dedicated top bar + bottom navigation.
 
-## Deployment
+## Versioning & updates
 
-Single container (`deploy/Dockerfile`): the API runs the InstanceManager which
-spawns Core subprocesses under rlimits; state survives in the `/data` volume;
-instances are automatically relaunched with identical credentials after a
-restart (durable registry + state files). See [DEPLOYMENT.md](DEPLOYMENT.md).
+`/version` on Core, Worker and Console returns `{name, version, build,
+commit}` (env: `EMUNEL_VERSION`, `EMUNEL_BUILD`, `EMUNEL_COMMIT`). The Console
+can compare against its own and trigger **redeploys** — Core images are
+versioned tags, so update = redeploy on a new tag, rollback = redeploy on
+the previous one. Instance configuration (DB rows) is untouched by both.

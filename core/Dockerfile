@@ -4,7 +4,7 @@ FROM python:3.12-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    EMUNEL_CORE_STATE_PATH=/data/state.json
+    EMUNEL_STATE_PATH=/data/state.json
 
 WORKDIR /app
 

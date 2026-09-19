@@ -3,7 +3,7 @@
 Sources, in ascending priority:
   1. Defaults defined here.
   2. Optional TOML configuration file (``--config /path/to/emunel-core.toml`` or
-     ``EMUNEL_CORE_CONFIG``). Only a handful of keys are honored; see ``FILE_KEYS``.
+     ``EMUNEL_CONFIG``). Only a handful of keys are honored; see ``FILE_KEYS``.
   3. Environment variables.
   4. CLI flags (parsed in ``__main__.py``).
 
@@ -113,7 +113,7 @@ def _load_toml(path: str | None) -> dict:
 
 def build_config(argv: list[str] | None = None) -> tuple[CoreConfig, argparse.Namespace]:
     parser = argparse.ArgumentParser(prog="emunel-core", description="EMUNEL Core runtime")
-    parser.add_argument("--config", dest="config_file", default=os.environ.get("EMUNEL_CORE_CONFIG"))
+    parser.add_argument("--config", dest="config_file", default=os.environ.get("EMUNEL_CONFIG"))
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--host", default=None)
     parser.add_argument("--state-path", default=None)
@@ -129,17 +129,17 @@ def build_config(argv: list[str] | None = None) -> tuple[CoreConfig, argparse.Na
 
     env_map = {
         "port": ("PORT", int),
-        "host": ("EMUNEL_CORE_HOST", str),
+        "host": ("EMUNEL_HOST", str),
         "api_token": ("EMUNEL_CORE_API_TOKEN", str),
-        "state_path": ("EMUNEL_CORE_STATE_PATH", str),
-        "log_level": ("EMUNEL_CORE_LOG_LEVEL", str),
-        "log_json": ("EMUNEL_CORE_LOG_JSON", lambda v: v.lower() in ("1", "true", "yes")),
-        "public_host": ("EMUNEL_CORE_PUBLIC_HOST", str),
-        "relay_buf": ("EMUNEL_CORE_RELAY_BUF", int),
-        "sock_buf": ("EMUNEL_CORE_SOCK_BUF", int),
-        "write_high_water": ("EMUNEL_CORE_WRITE_HIGH_WATER", int),
-        "ws_handshake_timeout": ("EMUNEL_CORE_WS_HANDSHAKE_TIMEOUT", float),
-        "upstream_connect_timeout": ("EMUNEL_CORE_UPSTREAM_CONNECT_TIMEOUT", float),
+        "state_path": ("EMUNEL_STATE_PATH", str),
+        "log_level": ("EMUNEL_LOG_LEVEL", str),
+        "log_json": ("EMUNEL_LOG_JSON", lambda v: v.lower() in ("1", "true", "yes")),
+        "public_host": ("EMUNEL_PUBLIC_HOST", str),
+        "relay_buf": ("EMUNEL_RELAY_BUF", int),
+        "sock_buf": ("EMUNEL_SOCK_BUF", int),
+        "write_high_water": ("EMUNEL_WRITE_HIGH_WATER", int),
+        "ws_handshake_timeout": ("EMUNEL_WS_HANDSHAKE_TIMEOUT", float),
+        "upstream_connect_timeout": ("EMUNEL_UPSTREAM_CONNECT_TIMEOUT", float),
         "xray_binary": ("EMUNEL_XRAY_BINARY", str),
         "xray_sha256": ("EMUNEL_XRAY_SHA256", str),
         "xray_max_runtimes": ("EMUNEL_XRAY_MAX_RUNTIMES", int),

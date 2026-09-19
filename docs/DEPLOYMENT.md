@@ -1,94 +1,145 @@
-# EMUNEL Deployment
+# Deploying EMUNEL
 
-## 1. Docker (recommended)
+Three supported targets:
+
+1. **One-click (Railway-style managed platform)** — deploy the repository root as a
+   single service. The unified entrypoint (`main.py`) runs the Console, the
+   Worker, and Core-instance management in one process tree. This is the
+   RVG-style flow: fork → deploy → sign in → Create Instance.
+2. **Split multi-service** — console (public domain) + worker
+   (internal-only) as separate services.
+3. **Self-hosted Docker** — full control, optional wildcard-domain edge.
+
+---
+
+## 1. One-click deploy (recommended, zero required variables)
+
+EMUNEL runs out of the box with **no environment variables at all**: with no
+database configured it uses embedded SQLite (persisted under `/data`), and
+with no GitHub OAuth configured the first visitor creates the admin account
+via the built-in setup screen.
+
+### Managed-platform setup
+
+1. **Fork** this repository to your GitHub account.
+2. **Add a service** from your fork:
+   - Source: your fork, root directory `/` (repository root)
+   - Port: leave the detected port / set `8080`; start command `python main.py`
+   - **Generate a domain** in the service settings → this URL is the whole
+     platform (console UI, API, and all instance endpoints under `/i/<token>`,
+     WebSocket + automatic TLS included).
+3. **Deploy.** Open your domain → sign in with the built-in account
+   **admin / admin** → **Create Instance** → Deploy → the instance page shows
+   a ready endpoint (`https://<your-domain>/i/<token>`) → import the generated
+   link into v2rayNG / NekoBox / Streisand.
+
+> Change the default password right after first login (Admin → System →
+> Change your password). Set `EMUNEL_DEFAULT_ADMIN=0` to disable seeding.
+
+That's the whole deployment. Optional hardening once it runs:
+
+| Upgrade | How |
+|---|---|
+| PostgreSQL instead of SQLite | Provision PostgreSQL, set `DATABASE_URL` to its connection URI on the application service, and redeploy. EMUNEL also accepts `PG*` connection variables. |
+| GitHub sign-in instead of password | Create a GitHub OAuth App (callback `https://<your-domain>/auth/callback`), set `EMUNEL_GITHUB_CLIENT_ID` / `EMUNEL_GITHUB_CLIENT_SECRET` as service variables. |
+| Public-domain metadata | Set `EMUNEL_PUBLIC_URL=https://<your-domain>` and `EMUNEL_COOKIE_SECURE=1`. |
+
+Data note: SQLite persists in `/data/emunel.db`; attach a persistent volume to
+`/data` so it survives redeploys, or switch to PostgreSQL as above.
+
+> **Instance isolation note:** on managed platforms the unified service uses
+> the **process driver** (OS rlimits + per-instance data dirs). Container-level
+> isolation (Docker driver) applies in self-hosted mode, or when the platform
+> supports DinD-sidecars.
+
+### Railway (optional per-instance-domains mode)
+
+Set `EMUNEL_RAILWAY_TOKEN`, and project/environment IDs (auto-injected when
+the console itself runs on Railway). Each instance is then deployed as its
+own Railway service with a generated public domain — verified against the
+current Railway GraphQL API. Without those variables, Railway uses the same
+single-service behavior as above.
+
+---
+
+## 2. Split multi-service (separate worker node)
+
+For larger deployments, split the console and worker:
+
+| Service | Root directory | Port | Domain | Notes |
+|---|---|---|---|---|
+| `console` | `console/api` | 8080 | **attach** (public) | env vars as in section 1 + `EMUNEL_LOCAL_WORKER_URL=http://worker:9100` |
+| `worker` | `worker` | 9100 | **none** (internal-only) | `EMUNEL_WORKER_TOKEN` shared with console; `EMUNEL_CONSOLE_URL=http://console:8080`; set `EMUNEL_CORE_PYTHON=python`, `EMUNEL_CORE_CWD=core` with root-directory context containing `core/` |
+
+Keep the worker reachable only on a private network shared with the console;
+not assigning a public domain alone is not an access-control guarantee.
+The console should remain the only public endpoint.
+
+---
+
+## 3. Self-hosted Docker
 
 ```bash
-git clone https://github.com/mehdialadi-star/EMUNEL.git
-cd EMUNEL
-cp .env.example .env   # optional — with no secrets set, strong ones are
-                       # generated on first boot (see RAILWAY.md)
-docker compose -f deploy/docker-compose.yml up -d --build
+export EMUNEL_PG_PASSWORD=$(openssl rand -hex 16)
+export EMUNEL_SECRET_KEY=$(openssl rand -hex 32)
+export EMUNEL_WORKER_TOKEN=$(openssl rand -hex 32)
+export EMUNEL_PUBLIC_URL=https://emunel.example.com
+export EMUNEL_GITHUB_CLIENT_ID=...
+export EMUNEL_GITHUB_CLIENT_SECRET=...
+export EMUNEL_ADMIN_GITHUB_LOGIN=yourlogin
+export EMUNEL_COOKIE_SECURE=1
+
+cd deploy/docker && docker compose up -d --build
 ```
 
-The stack now builds from the **root `Dockerfile`** (the same image Railway
-uses). With the `EMUNEL_*` secret variables unset, strong secrets are
-auto-generated on first boot and persisted under `/data` — see
-[RAILWAY.md](RAILWAY.md) for the cloud deploy guide.
+- Console: `http://127.0.0.1:8080` (put your own TLS proxy in front, or
+  uncomment the `caddy` service for automatic Let's Encrypt).
+- Worker: uses the **process driver** by default inside its container.
+  For real container isolation enable the Docker driver:
+  uncomment the docker.sock mount (read-only, worker only) and set
+  `EMUNEL_WORKER_DRIVER=docker`, then build the Core image:
+  `docker build -t emunel/core:latest ../../core`.
+- Optional wildcard endpoints: point `*.emunel.example.com` at the host and
+  uncomment the Caddy service (`deploy/proxy/Caddyfile.template`).
 
-- Console + API: `http://<host>:8080` (dashboard at `/`, docs at `/api/docs`)
-- Persistent state: the `emunel-data` volume holds the DB (SQLite default) and
-  every instance's Core state — quotas, links and counters survive restarts.
-- Health: `GET /health` (liveness), `GET /ready` (readiness: DB reachable).
-  The container has a Docker healthcheck wired to `/health`.
+---
 
-### PostgreSQL (optional)
+## Environment variables reference
 
-1. Uncomment the `db` service in `deploy/docker-compose.yml`.
-2. Set `DATABASE_URL=postgresql+asyncpg://emunel:<password>@db:5432/emunel` in `.env`.
+### Console / unified service
 
-Tables are created automatically on first boot (create-all). The platform runs
-identically on SQLite for small deployments.
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8080` | Public listen port (platform-injected) |
+| `EMUNEL_DATABASE_URL` | falls back to `DATABASE_URL` | PostgreSQL DSN |
+| `EMUNEL_SECRET_KEY` | auto-generated + persisted | Session hashing context |
+| `EMUNEL_WORKER_TOKEN` | auto-generated (unified) / required (split) | Shared secret with workers |
+| `EMUNEL_GITHUB_CLIENT_ID/SECRET` | — | OAuth login |
+| `EMUNEL_PUBLIC_URL` | `http://127.0.0.1:$PORT` | Canonical console origin (OAuth redirect, endpoint URLs) |
+| `EMUNEL_ADMIN_GITHUB_LOGIN` | — | Bootstrap admin |
+| `EMUNEL_COOKIE_SECURE` | `0` | Set `1` behind HTTPS |
+| `EMUNEL_LOCAL_WORKER_URL` | auto (unified) / `http://127.0.0.1:9100` | Default worker API |
+| `EMUNEL_DOMAIN_ROOT` | `emunel.app` | Informational for provider domains |
 
-## 2. Local / bare-metal
+### Worker (split deployments)
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env    # set EMUNEL_DEBUG=true for local development
-python main.py
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `EMUNEL_WORKER_TOKEN` | — (required) | Shared secret |
+| `EMUNEL_CONSOLE_URL` | — | Heartbeat target (optional) |
+| `EMUNEL_NODE_ID` / `EMUNEL_NODE_REGION` | `local` | Scheduler identity |
+| `EMUNEL_WORKER_DRIVER` | auto (`docker` if available, else `process`) | Isolation driver |
+| `EMUNEL_WORKER_DATA` | `/var/lib/emunel/instances` | Instance data root |
+| `EMUNEL_WORKER_PORT_START/END` | `19000-19999` | Port allocation range |
+| `EMUNEL_CORE_PYTHON` / `EMUNEL_CORE_CWD` | `.venv/bin/python` / — | How to launch Core (process driver) |
+| `EMUNEL_NODE_CAPACITY` | `20` | Max instances reported to scheduler |
 
-Requirements: Python 3.11+ (3.12 recommended). No other services are needed —
-the unified process runs the console API, the instance manager, and the Core
-subprocesses it spawns.
+### Core
 
-## 3. Reverse proxy (public traffic)
-
-Instance Cores bind loopback only. Expose them through your edge (Caddy/Nginx/
-Cloudflare) on one hostname per instance or one hostname with distinct paths,
-and set the instance's **public host** field so share links render correctly.
-A typical Caddy site for one instance:
-
-```
-proxy.example.com {
-    reverse_proxy 127.0.0.1:18100
-}
-```
-
-TLS is terminated at the edge — the Core's WebSocket and xHTTP transports are
-built for that topology (share links always carry `security=tls`).
-
-## 4. VMess (optional)
-
-VMess requires an explicitly installed Xray binary with a pinned digest. The
-Core never downloads binaries. Set `EMUNEL_XRAY_BINARY` and
-`EMUNEL_XRAY_SHA256` for the Core subprocess environment; per-link Xray
-runtimes bind loopback only and are stopped after the last relay.
-
-## 5. First boot checklist
-
-1. Sign in with the seeded admin account (`EMUNEL_ADMIN_*`) and **change the password**.
-2. Create an instance (choose protocols — only valid combinations are offered).
-3. Create a user + subscription bound to that instance (quota, expiry).
-4. Copy the subscription URL (`/sub/<token>`) or the share links into your client.
-5. Watch real traffic appear on the dashboard within one sync interval (10 s).
-
-## 6. Operations
-
-- **Logs** — UI → Logs (audit trail + per-instance Core logs), or `docker logs emunel`.
-- **Restart safety** — instances are relaunched automatically after a process
-  or container restart, with identical credentials; the port allocator
-  bind-probes to avoid double assignment and verifies ownership via the
-  management token before declaring an instance healthy.
-- **Backups** — back up the `/data` volume (SQLite + per-instance state).
-- **Upgrades** — pull the new image and restart; DB schema is created
-  idempotently and instance state files are forward-compatible JSON.
-
-## 7. Security notes
-
-- Management API of every Core is bearer-token protected; tokens are stored in
-  the console DB and never returned by any API.
-- Secret redaction runs in every Core's logging pipeline.
-- Diagnostics are on-demand, rate limited, and concurrency bounded.
-- In production mode (`EMUNEL_DEBUG=false`), startup validates secrets, CORS
-  origins and the JWT algorithm before accepting traffic.
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8000` | Listen port (allocated automatically by the worker) |
+| `EMUNEL_CORE_API_TOKEN` | — | Management API bearer (required for it to be enabled) |
+| `EMUNEL_STATE_PATH` | `/data/state.json` | Persistence |
+| `EMUNEL_LOG_LEVEL` / `EMUNEL_LOG_JSON` | `info` / `0` | Logging |
+| `EMUNEL_VERSION` / `EMUNEL_BUILD` / `EMUNEL_COMMIT` | `1.0.0`/`dev`/`unknown` | Version report |

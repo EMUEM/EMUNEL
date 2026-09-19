@@ -1,93 +1,93 @@
 # Deploying EMUNEL on Railway
 
-EMUNEL deploys to Railway with **zero configuration**: the repo contains a root
-`Dockerfile` (auto-detected by Railway), a `railway.json` healthcheck policy,
-and a zero-config bootstrap mode that generates strong secrets on first boot.
+EMUNEL deploys as **one service** from the repo root. The Dockerfile is
+auto-detected; no start command or variables are required.
 
-## What caused failed deploys before (fixed)
+## Quick deploy
 
-| Problem | Symptom in Railway logs | Fix |
-|---|---|---|
-| Requirements collision in Dockerfile | Build succeeds but runtime crash-loops: `ModuleNotFoundError: No module named 'sqlalchemy'` (while `import fastapi` works) — `COPY requirements.txt core/requirements.txt ./` flattened both same-named files and core's 5 packages silently overwrote the root list | Dockerfile now installs from the single root `requirements.txt` (a strict superset) and a build-time import check fails the build loudly if any critical package is missing |
-| Dockerfile `VOLUME` instruction | `dockerfile invalid: docker VOLUME at Line 49 is not supported, use Railway Volumes` → build fails instantly | Removed from the Dockerfile — attach a Railway volume at `/data` instead |
-| Secrets required at boot | `RuntimeError: EMUNEL_SECRET_KEY and JWT_SECRET_KEY must be replaced before production startup` → `Application startup failed. Exiting.` | Secrets are now **auto-generated** (persisted under `/data`) when not provided via env vars |
-| Port mismatch | App listening on `8000`, Railway routing to injected `PORT` → connection refused / "port not detected" | `main.py` honors the injected `PORT` (`EMUNEL_PORT` still wins if set) |
-| No build recipe | `deploy/Dockerfile` was not at repo root, so Railway fell back to Nixpacks guessing | Root `Dockerfile` + `railway.json` pin the build explicitly |
+1. **Fork** this repository.
+2. In Railway: **New Project → Deploy from GitHub repo** → pick your fork.
+   Railway detects the root `Dockerfile` and builds it (builder `DOCKERFILE`
+   is also pinned in `railway.json`).
+3. **Generate a domain** (Settings → Networking → Public domain). Railway
+   injects `PORT` automatically — EMUNEL binds it.
+4. Open the domain → sign in **admin / admin** → change the password in
+   **Admin → System**.
+5. **Create Instance → Deploy** → open the instance → **Config** tab →
+   copy the `vless://` link or the subscription URL into your client.
 
-## Deploy steps
+## Persistence (required for instances to survive redeploys)
 
-1. **Create the service** — Railway → project → *New Service* → *GitHub Repo*
-   → pick your EMUNEL fork. Railway detects the root `Dockerfile` and builds
-   it (the `railway.json` config pins the builder, the `/health` healthcheck
-   and an on-failure restart policy).
-2. *(Optional but recommended)* **Attach a volume** — Settings → Volumes →
-   mount at `/data`. This persists the SQLite database, generated secrets,
-   instance registry and per-instance link/traffic state across redeploys.
-   Without a volume everything still works but resets on each redeploy.
-   (The Dockerfile deliberately contains no `VOLUME` instruction: Railway's
-   builder rejects it — platform volumes are attached from the dashboard.)
-3. *(Optional)* **Add PostgreSQL** — Settings → Database → add Railway
-   Postgres. It injects `DATABASE_URL`, which EMUNEL normalizes to
-   `postgresql+asyncpg://` automatically — no other change needed.
-4. **Generate a domain** — Settings → Networking → Generate Domain. Railway
-   injects `PORT`; EMUNEL listens on it. The dashboard is served at `/`,
-   the API at `/api/v1/...`, docs at `/api/docs`.
-5. **Sign in** — default credentials are **admin / admin** (same as the
-   reference project). Change the password in Users → admin immediately
-   after first login.
+Attach a volume:
 
-## Auto-provisioned variables (zero-config, reference parity)
+- **Settings → Volumes → New Volume** → mount path **`/data`**
 
-Deploy with an EMPTY variable list and EMUNEL provisions everything on
-first boot — the reference project's approach:
+Everything the platform persists lives under `/data` (or `.emunel-data/`
+next to the app when `/data` is absent): the SQLite database, the session
+secret, and every instance's state (links, quotas, traffic counters).
 
-| Variable | If unset | If set |
-|---|---|---|
-| `EMUNEL_SECRET_KEY` | strong random value, persisted to `/data/secrets.json` (0600) — survives restarts | used as-is (weak values log CRITICAL warnings) |
-| `EMUNEL_JWT_SECRET_KEY` | same auto-generation + persistence | used as-is |
-| `DATABASE_URL` | embedded SQLite at `/data/emunel.db` | normalized (`postgresql://` → asyncpg DSN) |
-| `PORT` | Railway injects it — honored automatically | — |
-| Admin credentials | **admin / admin**, seeded on first boot, console warns to change it | `EMUNEL_ADMIN_USERNAME` / `EMUNEL_ADMIN_PASSWORD` override |
+> Without a volume the panel still boots and works, but data resets on
+> each deploy — the instance endpoint page will tell users to copy fresh
+> configs after a redeploy.
+
+## Auto-provisioned variables (zero config)
+
+Nothing is required. For reference, these are resolved automatically:
+
+| Variable | Behavior when unset |
+|---|---|
+| `PORT` | Railway injects it; EMUNEL binds `0.0.0.0:$PORT` |
+| `EMUNEL_DATABASE_URL` / `DATABASE_URL` / `POSTGRES_*` / `PG*` | embedded SQLite under `/data` |
+| `EMUNEL_SECRET_KEY` | generated, persisted 0600 under `/data` |
+| `EMUNEL_WORKER_TOKEN` | generated per boot (console + embedded worker share one process tree) |
+| `EMUNEL_PUBLIC_URL` | derived from request headers |
+| admin account | seeded `admin` / `admin` on first boot (logged once) |
+
+Optional: `EMUNEL_GITHUB_CLIENT_ID` + `EMUNEL_GITHUB_CLIENT_SECRET`
+(GitHub OAuth login; callback `<public-url>/auth/callback`),
+`EMUNEL_TELEGRAM_CHANNEL` (sidebar link), `EMUNEL_COOKIE_SECURE=1`.
+
+## How configs stay reachable (single public port)
+
+Railway exposes one HTTP port per service. EMUNEL routes **all** proxy
+traffic through the console domain under a private endpoint token:
+
+```
+vless://<uuid>@<your-domain>:443?...&path=%2Fi%2F<endpoint-token>%2Fws%2F<uuid>
+```
+
+Client → Railway edge → Console gateway (`/i/<token>/...`) → embedded
+Worker → Core. HTTP is streamed (xHTTP stream-up uploads work) and
+WebSocket is relayed frame-by-frame. No per-port exposure is needed.
 
 ## Never-crash guarantees
 
-* **Startup never raises** on weak/missing configuration — misconfiguration
-  logs CRITICAL warnings and the container keeps serving (crash-looping
-  helps no one).
-* **Database outages degrade, not kill**: if Postgres is still provisioning,
-  connection attempts retry (10s connect timeout, ~30 attempts); if it stays
-  down, the app serves `/health` 200, `/ready` false, and a background task
-  retries every 15s until it recovers. The container never crash-loops.
-* **Instance manager / link-sync failures** are contained to their
-  subsystems — the rest of the console keeps working.
+- **Build time**: the Dockerfile verifies every critical package imports
+  before the image is built (a missing dependency fails the build loudly,
+  not a runtime crash-loop).
+- **Boot**: no variable is required; SQLite + secrets + admin account
+  auto-provision; `main.py` honors the injected `PORT`.
+- **Runtime**: instance Cores run with `RLIMIT_AS`/`RLIMIT_CPU`/`RLIMIT_FSIZE`
+  limits (per-UID `RLIMIT_NPROC` is deliberately not used — it aborts healthy
+  processes in shared-user containers); dead instances are marked failed, the
+  panel stays up.
+- **Restarts**: Railway restarts on failure (`railway.json`), and the worker
+  re-launches known instances after a pod restart (durable registry).
 
-## Exposing proxy instances on Railway
+## What failed before (fixed)
 
-The console/dashboard traffic goes through the single service domain. Proxy
-**instances** run on their own internal ports (`18100+`). To make a running
-instance reachable from the internet, create an additional domain (or TCP
-proxy) targeting that instance's port — Settings → Networking → New Domain →
-select the instance port. The image sets `EMUNEL_CORE_BIND_HOST=0.0.0.0`
-specifically so this works; Railway's edge only routes declared ports, so
-nothing else is exposed.
+| Symptom | Cause | Fix |
+|---|---|---|
+| Build rejected: `docker VOLUME not supported` | Dockerfile had a `VOLUME` instruction | removed; attach the volume via the Railway dashboard |
+| Crash-loop: `ModuleNotFoundError: sqlalchemy` | two `requirements.txt` files collided in `COPY` | single root `requirements.txt` + build-time import gate |
+| Instances unreachable ("no ping") | configs pointed at raw instance ports | all traffic now routes through `/i/<token>` on the public port |
+| Instances failing to deploy on busy hosts | per-UID `RLIMIT_NPROC` aborted healthy Cores | dropped from the process driver (kept in Docker driver as `--pids-limit`) |
 
-For each instance, the dashboard shows its port; share links embed the
-public host recorded for that instance.
-
-## Resource notes
-
-* The build is wheel-only (no compiler toolchain) — it fits comfortably in
-  Railway's builder memory and takes well under a minute.
-* Runtime: each proxy instance is a subprocess capped by per-instance rlimits
-  (`RLIMIT_AS` floor 512 MB, CPU/fsize caps). On 512 MB plans a single
-  instance plus the console may be tight — 1 GB+ is comfortable.
-
-## Verifying the deployment
+## Docker self-hosting
 
 ```bash
-curl https://<your-app>.up.railway.app/health    # {"status":"ok",...}
-curl https://<your-app>.up.railway.app/ready     # {"ready":true,"database":{...}}
+docker build -t emunel .
+docker run -d -p 8080:8080 -v emunel-data:/data emunel
 ```
 
-Then log in, create an instance, provision a subscription, and watch real
-traffic appear on the dashboard.
+Or with compose: `docker compose -f deploy/docker/docker-compose.yml up -d`.

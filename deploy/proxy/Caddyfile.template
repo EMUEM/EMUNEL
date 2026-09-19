@@ -1,0 +1,20 @@
+# EMUNEL edge proxy (Caddy) — used only for self-hosted wildcard-domain mode.
+#
+# Behavior here: the console handles everything; instances ride the same
+# origin under /i/<token>/...  With wildcard DNS you may additionally map
+# per-instance hostnames by uncommenting the second block.
+
+{
+	email {$EMUNEL_ADMIN_EMAIL:admin@example.com}
+}
+
+# The console (and instance gateway under /i/)
+*.{$EMUNEL_DOMAIN_ROOT}, {$EMUNEL_DOMAIN_ROOT} {
+	reverse_proxy {$EMUNEL_CONSOLE_UPSTREAM:console:8080}
+}
+
+# Per-instance hostnames (optional; requires EMUNEL_ENDPOINT_HOSTNAMES=1
+# and the instance's Host routed by the console's custom-domain table):
+# *.inst.{$EMUNEL_DOMAIN_ROOT} {
+# 	reverse_proxy {$EMUNEL_CONSOLE_UPSTREAM:console:8080}
+# }

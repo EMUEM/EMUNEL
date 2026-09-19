@@ -1,5 +1,9 @@
-# Deterministic Nixpacks configuration (fallback path if the Railway service
-# is explicitly set to NIXPACKS instead of using the root Dockerfile).
-# requirements.txt at the repo root already covers API + Core dependencies.
+# Nixpacks fallback (only used when a platform builds without Docker support).
+[phases.setup]
+nixPkgs = ["python312"]
+
+[phases.install]
+cmds = ["python -m venv .venv", ".venv/bin/pip install -r requirements.txt"]
+
 [start]
-cmd = "python main.py"
+cmd = ".venv/bin/python main.py"
