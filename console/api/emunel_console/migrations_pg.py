@@ -181,4 +181,17 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE users ALTER COLUMN github_id DROP NOT NULL;
         """,
     ),
+    (
+        "0007_instance_volume",
+        """
+        CREATE TABLE IF NOT EXISTS instance_volume (
+            instance_id   UUID PRIMARY KEY REFERENCES instances(id) ON DELETE CASCADE,
+            limit_bytes   BIGINT,
+            baseline_bytes BIGINT NOT NULL DEFAULT 0,
+            used_cache    BIGINT NOT NULL DEFAULT 0,
+            used_at       TIMESTAMPTZ,
+            updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+    ),
 ]

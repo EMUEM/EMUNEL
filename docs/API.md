@@ -36,6 +36,16 @@ requests require the `X-EMUNEL-CSRF` header set to the session cookie value
 | GET | `/api/instances/:id/deployments/:depId/logs` | Pipeline logs for one deployment |
 | GET | `/api/instances/:id/activity` | Instance activity feed |
 | GET | `/api/activity` | User-wide activity feed |
+| GET | `/api/instances/:id/volume` | Volume state: `{limit_bytes, unlimited, used_bytes, live, percent, exceeded}` |
+| PUT | `/api/instances/:id/volume` | Set/clear the data cap. Body: `{limit_gb}` (fractional) or `{limit_bytes}`; empty/null/0 → Default = unlimited |
+| POST | `/api/instances/:id/volume/reset` | Start a fresh accounting period (usage counter back to zero; Core counters untouched) |
+
+Volume behavior: usage is the Core's own lifetime traffic counter (persisted
+across restarts), read live while the instance runs and cached when stopped.
+When usage reaches the limit the Console stops the instance through the normal
+lifecycle path and records an activity event; deploy/redeploy answer `409`
+until the cap is raised or cleared. `EMUNEL_VOLUME_CHECK_SECONDS` (default 45)
+controls the enforcement interval.
 
 Protocols: `vless-ws`, `trojan-ws`, `shadowsocks`, `xhttp-packet-up`,
 `xhttp-stream-up`.

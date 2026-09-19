@@ -18,7 +18,7 @@ PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>EMUNEL Console</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2.5a13.5 13.5 0 1 0 13.06 17.02 11 11 0 0 1-14.58-14.58A13.6 13.6 0 0 1 16 2.5Z' fill='%23e2ddf6'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2.6 27.8 9.4v13.2L16 29.4 4.2 22.6V9.4Z' fill='none' stroke='%23e2ddf6' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M12.4 10.6v10.8M12.4 10.6h8.2M12.4 16h5.4M12.4 21.4h8.2' stroke='%23e2ddf6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
 :root{--bg:#0a0c10;--bg2:#10131a;--sur:#12151c;--sur2:#171b24;--bd:#1e2430;--bd2:#2a3242;
 --tx:#e7ebf3;--dim:#9aa4b8;--fnt:#5d6678;--acc:#e2ddf6;--accd:#0b0d11;--blu:#8d9bff;
@@ -26,6 +26,10 @@ PAGE = r"""<!doctype html>
 --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;--r:10px;--rs:7px}
 *{box-sizing:border-box}html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+::selection{background:rgba(141,155,255,.25);color:var(--tx)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#232a38;border-radius:6px;border:2px solid var(--bg)}
+::-webkit-scrollbar-track{background:transparent}
 a{color:var(--blu);text-decoration:none}
 .shell{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
 .sb{border-right:1px solid var(--bd);background:var(--bg2);padding:20px 12px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
@@ -55,19 +59,26 @@ a{color:var(--blu);text-decoration:none}
 .bnav{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:30;background:rgba(13,16,22,.97);border-top:1px solid var(--bd);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
 .bnav .ni{flex:1;flex-direction:column;gap:2px;font-size:10px;align-items:center;padding:6px 0}}
 .bnav{display:none}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 13px;border-radius:var(--rs);border:1px solid var(--bd2);background:var(--sur2);color:var(--tx);font:600 13px var(--sans);cursor:pointer;white-space:nowrap}
-.btn:hover{background:#1c212c;border-color:#37415a}.btn:disabled{opacity:.45;cursor:not-allowed}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--accd)}.btn.pri:hover{background:#edeafb}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 13px;border-radius:var(--rs);border:1px solid var(--bd2);background:var(--sur2);color:var(--tx);font:600 13px var(--sans);cursor:pointer;white-space:nowrap;transition:background .12s ease,border-color .12s ease,box-shadow .12s ease,transform .06s ease;box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.btn:hover{background:#1c212c;border-color:#37415a}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible{outline:2px solid var(--blu);outline-offset:2px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--accd);box-shadow:0 2px 14px rgba(226,221,246,.10),inset 0 1px 0 rgba(255,255,255,.14)}
+.btn.pri:hover{background:#edeafb;box-shadow:0 3px 18px rgba(226,221,246,.18)}
 .btn.dng{color:var(--red);border-color:rgba(239,107,115,.35)}.btn.dng:hover{background:rgba(239,107,115,.09)}
 .btn.sm{padding:5px 9px;font-size:12px}
-.inp{width:100%;padding:9px 12px;background:var(--bg2);color:var(--tx);border:1px solid var(--bd2);border-radius:var(--rs);font:400 13.5px var(--sans)}
+.inp{width:100%;padding:9px 12px;background:var(--bg2);color:var(--tx);border:1px solid var(--bd2);border-radius:var(--rs);font:400 13.5px var(--sans);transition:border-color .12s ease,box-shadow .12s ease}
+.inp:hover{border-color:#37415a}
+.inp::placeholder{color:#4d5566}
 .inp:focus{outline:none;border-color:var(--blu);box-shadow:0 0 0 3px rgba(141,155,255,.15)}
+.inp:focus-visible{outline:none}
 .fld{margin-bottom:14px}.fld label{display:block;font-size:12px;font-weight:600;color:var(--dim);margin-bottom:5px}
-.card{background:var(--sur);border:1px solid var(--bd);border-radius:var(--r);padding:16px}
+.card{background:var(--sur);border:1px solid var(--bd);border-radius:var(--r);padding:16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
 .card h3{margin:0 0 6px;font-size:13.5px}
 .sgs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:22px}
 @media(max-width:840px){.sgs{grid-template-columns:repeat(2,1fr)}}
-.sg{background:var(--sur);border:1px solid var(--bd);border-radius:var(--r);padding:12px 14px}
+.sg{background:var(--sur);border:1px solid var(--bd);border-radius:var(--r);padding:12px 14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
 .sg .l{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--fnt)}
 .sg .v{font:650 24px var(--mono);margin-top:2px}
 .st{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
@@ -77,7 +88,8 @@ a{color:var(--blu);text-decoration:none}
 @keyframes pu{0%{box-shadow:0 0 0 0 rgba(78,203,149,.45)}70%{box-shadow:0 0 0 6px rgba(78,203,149,0)}100%{box-shadow:0 0 0 0 rgba(78,203,149,0)}}
 .ig{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:11px}
 .ic{background:var(--sur);border:1px solid var(--bd);border-radius:var(--r);padding:14px;cursor:pointer;display:flex;flex-direction:column;gap:9px;transition:border-color .12s}
-.ic:hover{border-color:var(--bd2)}
+.ic:hover{border-color:var(--bd2);transform:translateY(-1px);box-shadow:0 6px 18px rgba(0,0,0,.28)}
+.ic{transition:border-color .12s,transform .08s,box-shadow .12s}
 .ic .t{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .ic .nm{font-size:14.5px;font-weight:650}
 .ic .ep{font-family:var(--mono);font-size:11px;color:var(--dim);background:var(--bg2);border:1px solid var(--bd);padding:5px 7px;border-radius:var(--rs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
@@ -87,11 +99,14 @@ a{color:var(--blu);text-decoration:none}
 .ha{display:flex;gap:7px;flex-wrap:wrap}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--bd);margin-bottom:18px;overflow-x:auto;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
-.tab{padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--fnt);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;font-family:inherit}
+.tab{padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--fnt);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;font-family:inherit;border-radius:6px 6px 0 0}
+.tab:hover{color:var(--dim)}
+.tab:focus-visible{outline:2px solid var(--blu);outline-offset:-2px}
 .tab.act{color:var(--tx);border-bottom-color:var(--acc)}
 .tbl{width:100%;border-collapse:collapse;font-size:12.5px}
 .tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--fnt);padding:7px 10px;border-bottom:1px solid var(--bd)}
 .tbl td{padding:9px 10px;border-bottom:1px solid var(--bd)}
+.tbl tbody tr:hover td{background:rgba(255,255,255,.015)}
 .tbl tr:last-child td{border-bottom:none}
 .term{background:#07090c;border:1px solid var(--bd);border-radius:var(--r);font-family:var(--mono);font-size:11.5px;overflow:hidden}
 .tb{display:flex;gap:7px;align-items:center;padding:7px 9px;border-bottom:1px solid var(--bd);background:var(--sur);flex-wrap:wrap}
@@ -108,20 +123,21 @@ a{color:var(--blu);text-decoration:none}
 .kv .v{font-family:var(--mono);font-size:13.5px;margin-top:2px}
 .optg{display:grid;grid-template-columns:1fr 1fr;gap:9px}
 @media(max-width:640px){.optg{grid-template-columns:1fr}}
-.opt{border:1px solid var(--bd2);border-radius:var(--rs);padding:11px 13px;cursor:pointer;background:var(--bg2)}
+.opt{border:1px solid var(--bd2);border-radius:var(--rs);padding:11px 13px;cursor:pointer;background:var(--bg2);transition:border-color .12s,background .12s}
+.opt:hover{border-color:var(--blu)}
 .opt.sel{border-color:var(--acc);background:var(--sur2)}
 .opt .t{font-weight:650;font-size:13px}.opt .d{font-size:11.5px;color:var(--fnt);margin-top:2px}
 .mono{font-family:var(--mono);font-size:12px}
 .mut{color:var(--dim)}.ftx{color:var(--fnt)}
 .row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.grow{flex:1}
-.chip{display:inline-flex;padding:1px 7px;border:1px solid var(--bd2);border-radius:999px;font-size:11px;color:var(--dim);font-family:var(--mono)}
+.chip{display:inline-flex;padding:1px 7px;border:1px solid var(--bd2);border-radius:999px;font-size:11px;color:var(--dim);font-family:var(--mono);background:rgba(255,255,255,.02)}
 .tw{position:fixed;bottom:18px;right:18px;z-index:100;display:flex;flex-direction:column;gap:7px}
-.to{background:var(--sur2);border:1px solid var(--bd2);border-left:3px solid var(--blu);border-radius:var(--rs);padding:9px 13px;min-width:220px;max-width:340px;font-size:12.5px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.to{background:var(--sur2);border:1px solid var(--bd2);border-left:3px solid var(--blu);border-radius:var(--rs);padding:9px 13px;min-width:220px;max-width:340px;font-size:12.5px;box-shadow:0 8px 24px rgba(0,0,0,.35);animation:tin .18s ease}
+@keyframes tin{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
 .to.ok{border-left-color:var(--grn)}.to.err{border-left-color:var(--red)}
 .sp1{width:15px;height:15px;border:2px solid var(--bd2);border-top-color:var(--acc);border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
 @keyframes sp{to{transform:rotate(360deg)}}
-.lw{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px}
-.lc{width:360px;max-width:100%;text-align:center}
+.lc{width:378px;max-width:100%;text-align:center}
 .lc h2{margin:8px 0 0;font-size:21px}
 .lc .p{color:var(--dim);font-size:13px;margin:8px 0 20px}
 .lc .card{padding:24px 22px;text-align:left}
@@ -131,7 +147,27 @@ a{color:var(--blu);text-decoration:none}
 .qr-ov{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;z-index:200}
 .qr-c{background:var(--sur);border:1px solid var(--bd2);border-radius:12px;padding:20px;text-align:center;max-width:340px}
 .qr-c .qrbox svg{width:240px;height:240px;display:block;margin:8px auto;background:#fff;border-radius:8px}
-.free{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;letter-spacing:1px;font-weight:700;color:var(--grn);border:1px solid rgba(78,203,149,.4);border-radius:999px;padding:2px 9px;text-transform:uppercase}
+.free{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:1px;font-weight:700;color:var(--grn);border:1px solid rgba(78,203,149,.4);border-radius:999px;padding:2px 9px;text-transform:uppercase}
+.fdot{width:6px;height:6px;border-radius:50%;background:var(--grn);box-shadow:0 0 0 3px rgba(78,203,149,.15);flex:none}
+.vmeter{height:9px;background:var(--bg2);border:1px solid var(--bd);border-radius:999px;overflow:hidden}
+.vmeter>div{height:100%;background:var(--blu);border-radius:999px;transition:width .4s ease}
+.vmeter.warn>div{background:var(--amb)}
+.vmeter.crit>div{background:var(--red)}
+.qch{display:inline-flex;align-items:center;padding:4px 11px;border:1px solid var(--bd2);border-radius:999px;background:var(--bg2);color:var(--dim);font:600 11.5px var(--sans);cursor:pointer;transition:border-color .12s,color .12s}
+.qch:hover{border-color:var(--blu);color:var(--tx)}
+.qch.on{border-color:var(--acc);color:var(--tx);background:var(--sur2)}
+.lw{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:radial-gradient(1100px 520px at 50% -12%,rgba(141,155,255,.07),transparent 60%),radial-gradient(720px 420px at 88% 112%,rgba(226,221,246,.05),transparent 55%),var(--bg)}
+.lc{width:378px;max-width:100%}
+.lhead{text-align:center;margin-bottom:18px}
+.lt{width:58px;height:58px;margin:0 auto 13px;border-radius:15px;display:flex;align-items:center;justify-content:center;color:var(--acc);background:var(--sur);border:1px solid var(--bd2);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 12px 32px rgba(0,0,0,.38)}
+.lt svg{width:30px;height:30px}
+.lhead h2{margin:0;font-size:22px;font-weight:700;letter-spacing:3px}
+.lsub{font-size:9.5px;letter-spacing:4.5px;color:var(--fnt);margin-top:4px;text-transform:uppercase}
+.lhead .p{color:var(--dim);font-size:13px;margin:12px 0 0;line-height:1.55}
+.lcard{padding:24px 22px;text-align:left}
+.lcard .lgo{width:100%;padding:10px}
+.lmeta{margin-top:20px;display:flex;align-items:center;justify-content:center;gap:12px;color:var(--fnt);font-size:10px;letter-spacing:2.5px;text-transform:uppercase}
+.dl{flex:1;height:1px;background:linear-gradient(90deg,transparent,var(--bd2),transparent)}
 </style>
 </head>
 <body>
@@ -181,10 +217,14 @@ function api(method,path,body,retry){
 // ───────────────────────────── icons ─────────────────────────────
 function ic(n){var p={dash:'<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/>',
 plus:'<path d="M12 5v14M5 12h14"/>',gear:'<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/>',
+menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
+vol:'<path d="M12 3v18M8 7v10M16 7v10M20 10v4M4 10v4"/>',
 gh:'<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" fill="currentColor" stroke="none"/>',
 tg:'<path d="M21.9 4.6 18.9 19c-.2 1-.8 1.2-1.7.8l-4.6-3.4-2.2 2.1c-.3.3-.5.5-1 .5l.4-4.7L18.6 6c.4-.3-.1-.5-.6-.2L7.3 12.4l-4.3-1.4c-.9-.3-.9-.9.2-1.3L20.7 3.3c.8-.3 1.5.2 1.2 1.3Z" fill="currentColor" stroke="none"/>'};
 return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px">'+p[n]+"</svg>"}
-var MARK='<svg class="bm" viewBox="0 0 32 32" fill="none"><path d="M16 2.5a13.5 13.5 0 1 0 13.06 17.02 11 11 0 0 1-14.58-14.58A13.6 13.6 0 0 1 16 2.5Z" fill="currentColor"/><path d="M4 29.5h24" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+var MARK_IN='<path d="M16 2.6 27.8 9.4v13.2L16 29.4 4.2 22.6V9.4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12.4 10.6v10.8M12.4 10.6h8.2M12.4 16h5.4M12.4 21.4h8.2" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+var MARK='<svg class="bm" viewBox="0 0 32 32" fill="none">'+MARK_IN+"</svg>";
+var MARK_L='<svg viewBox="0 0 32 32" fill="none">'+MARK_IN+"</svg>";
 
 // ───────────────────────────── shell/state ─────────────────────────────
 var USER=null, cleanup=null, pollTimer=null, LINKS={github:"https://github.com/mehialadi-star/EMUNEL",telegram:""};
@@ -202,11 +242,11 @@ function shell(nav){
     (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+' Admin</button>':"")+
     (LINKS.github?'<a class="ni" href="'+LINKS.github+'" target="_blank" rel="noopener">'+ic("gh")+' GitHub</a>':"")+
     (LINKS.telegram?'<a class="ni" href="'+esc(LINKS.telegram)+'" target="_blank" rel="noopener">'+ic("tg")+' Telegram</a>':"")+
-    '<div style="padding:6px 8px"><span class="free">● Free</span></div>'+
+    '<div style="padding:6px 8px"><span class="free"><span class="fdot"></span>Free</span></div>'+
     '<div class="sbft"><div class="who"><b>'+esc(USER.name||USER.login)+'</b><span>@'+esc(USER.login)+'</span></div>'+
     '<button class="btn sm" style="margin-left:auto" id="lg">Sign out</button></div></aside>'+
     '<div class="main"><div class="topbar">'+MARK+'<b style="font-size:14px">EMUNEL</b>'+
-    '<button class="btn sm menu-btn" id="mb">&#9776;</button>'+
+    '<button class="btn sm menu-btn" id="mb">'+ic("menu")+"</button>"+
     '<button class="btn sm" style="margin-left:auto" id="lgm">Sign out</button></div>'+
     '<div class="ct" id="view"></div>'+
     '<nav class="bnav"><button class="ni '+(nav==="dash"?"act":"")+'" data-nav="dash">'+ic("dash")+'<span>Home</span></button>'+
@@ -230,14 +270,17 @@ function closeDrawer(){var w=window.__closeDrawer;if(w)w()}
 // ───────────────────────────── login ─────────────────────────────
 function viewLogin(){
   stopPoll();setCleanup(null);
-  $("#app").innerHTML='<div class="lw"><div class="lc"><div class="card">'+
-    '<div style="text-align:center">'+MARK+'<h2>EMUNEL</h2>'+
-    '<p class="p" style="text-align:center">Deploy and manage multi-protocol proxy instances.</p></div>'+
-    '<div class="fld"><label>Account name</label><input class="inp" id="u" placeholder="admin" autocomplete="username"></div>'+
+  $("#app").innerHTML='<div class="lw"><div class="lc">'+
+    '<div class="lhead"><div class="lt">'+MARK_L+'</div><h2>EMUNEL</h2><div class="lsub">Console</div>'+
+    '<p class="p">Deploy and manage multi-protocol<br>proxy instances — one panel, zero servers.</p></div>'+
+    '<div class="card lcard">'+
+    '<div class="fld"><label>Account name</label><input class="inp" id="u" placeholder="admin" autocomplete="username" autofocus></div>'+
     '<div class="fld"><label>Password</label><input class="inp" id="p" type="password" autocomplete="current-password"></div>'+
-    '<button class="btn pri" id="go" style="width:100%">Sign in</button>'+
+    '<button class="btn pri lgo" id="go">Sign in</button>'+
     '<p class="fn">Default account is <span class="mono">admin / admin</span> — change it in Admin → System.</p>'+
-    '</div></div></div>';
+    '</div>'+
+    '<div class="lmeta"><span class="dl"></span>EMUNEL<span class="dl"></span></div>'+
+    '</div></div>';
   $("#go").onclick=function(){
     var b=$("#go");b.disabled=true;
     api("POST","/auth/login-password",{name:$("#u").value.trim()||"admin",password:$("#p").value})
@@ -274,7 +317,7 @@ function viewDash(){
     var ep=i.endpoint_url||(i.domain&&i.domain.indexOf("-")>0&&i.domain.length>30?null:null);
     return '<div class="ic" data-id="'+i.id+'"><div class="t"><span class="nm">'+esc(i.name)+"</span>"+stEl(i.status).outerHTML+"</div>"+
       (i.endpoint_url?'<div class="ep">'+esc(i.endpoint_url)+"</div>":'<div class="ep ftx">no endpoint yet</div>')+
-      '<div class="mt"><span>'+esc(i.region)+"</span><span>"+i.deployments_count+' deploys</span><span>created '+ago(i.created_at)+"</span></div></div>";
+      '<div class="mt"><span>'+esc(i.region)+"</span>"+(i.volume_limit_bytes?'<span class="chip">'+fmtBytes(i.volume_limit_bytes)+"</span>":"")+"<span>"+i.deployments_count+' deploys</span><span>created '+ago(i.created_at)+"</span></div></div>";
   }
   load().then(function(list){
     pollTimer=every(6000,function(){
@@ -345,7 +388,7 @@ function viewWizard(){
   show();
 }
 // ───────────────────────────── instance page ─────────────────────────────
-var TABS=["config","overview","logs","networking","deployments","activity","settings"];
+var TABS=["config","volume","overview","logs","networking","deployments","activity","settings"];
 function viewInst(id){
   shell("dash");
   var v=$("#view");v.innerHTML='<div class="lw"><span class="sp1"></span></div>';
@@ -423,6 +466,49 @@ function viewInst(id){
       }
       $("#cf-r").onclick=loadCfg;loadCfg();
     }
+    else if(tab==="volume"){
+      b.innerHTML='<div class="card" style="max-width:620px"><div class="row" style="justify-content:space-between"><h3>'+ic("vol")+' Volume</h3><button class="btn sm" id="vrf">Refresh</button></div>'+
+        '<p class="mut" style="font-size:12.5px;margin:6px 0 16px">Data transferred through this instance. Leave the limit empty for the default — unlimited.</p>'+
+        '<div id="vt"></div></div>'+
+        '<div class="card" style="max-width:620px;margin-top:14px"><h3>Limit</h3>'+
+        '<div class="row" style="margin-top:12px"><div class="fld" style="width:190px;margin:0"><label>Volume limit (GB)</label><input class="inp" id="vg" type="number" min="0.001" step="0.1" placeholder="unlimited"></div><div class="grow"></div></div>'+
+        '<div class="row" style="margin-top:2px;gap:6px" id="vp"></div>'+
+        '<div class="row" style="margin-top:16px"><button class="btn pri" id="vs">Save limit</button><button class="btn" id="vr">Reset usage counter</button></div>'+
+        '<p class="fn" id="vn"></p></div>';
+      var PRE=[10,50,100,250,500,0];
+      $("#vp").innerHTML=PRE.map(function(g){return '<button class="qch" data-g="'+g+'">'+(g?g+" GB":"Unlimited")+"</button>"}).join("");
+      Array.prototype.forEach.call(b.querySelectorAll(".qch"),function(c){c.onclick=function(){
+        $("#vg").value=c.dataset.g==="0"?"":c.dataset.g;
+        Array.prototype.forEach.call(b.querySelectorAll(".qch"),function(x){x.classList.toggle("on",x===c)})}});
+      function loadV(){
+        api("GET","/api/instances/"+id+"/volume").then(function(v){
+          var t=$("#vt");if(!t)return;
+          var lim=v.limit_bytes,pct=v.percent==null?null:Math.min(100,v.percent);
+          t.innerHTML=(lim?
+            '<div class="vmeter'+(v.exceeded?" crit":pct>80?" warn":"")+'"><div style="width:'+pct+'%"></div></div>'+
+            '<div class="row" style="justify-content:space-between;margin-top:8px"><b class="mono" style="font-size:16px">'+fmtBytes(v.used_bytes)+' <span class="ftx" style="font-size:12px">of '+fmtBytes(lim)+'</span></b><span class="mono ftx">'+pct.toFixed(1)+"%</span></div>"
+            :'<div class="row" style="justify-content:space-between"><b class="mono" style="font-size:16px">'+fmtBytes(v.used_bytes)+'</b><span class="chip">default · unlimited</span></div>')+
+            '<div class="kv" style="margin-top:16px">'+
+            '<div class="it"><div class="k">Limit</div><div class="v">'+(lim?fmtBytes(lim):"Unlimited")+"</div></div>"+
+            '<div class="it"><div class="k">Used</div><div class="v">'+fmtBytes(v.used_bytes)+(v.live?"":" · cached")+"</div></div>"+
+            '<div class="it"><div class="k">Remaining</div><div class="v">'+(v.remaining_bytes==null?"—":fmtBytes(v.remaining_bytes))+"</div></div>"+
+            '<div class="it"><div class="k">Source</div><div class="v">'+(v.live?"live core":"last known")+"</div></div></div>"+
+            (v.exceeded?'<p style="color:var(--red);font-size:12.5px;margin:12px 0 0">Limit reached — the instance is stopped. Raise or clear the limit, then deploy again.</p>':"");
+          $("#vg").value=lim?String(+(lim/1073741824).toFixed(3)):"";
+          $("#vn").textContent=v.used_at?("Usage last refreshed "+ago(v.used_at)+"."):"Usage refreshes while the instance runs.";
+        }).catch(function(e){$("#vt").innerHTML='<span class="ftx">'+esc(e.message)+"</span>"});
+      }
+      $("#vrf").onclick=loadV;
+      $("#vs").onclick=function(){
+        var raw=$("#vg").value.trim(),gb=null;
+        if(raw!==""){gb=parseFloat(raw);if(!isFinite(gb)||gb<=0){toast("Enter a positive number of GB — or leave it empty for unlimited","err");return}}
+        api("PUT","/api/instances/"+id+"/volume",{limit_gb:gb}).then(function(v){
+          toast(v.limit_bytes?("Limit set to "+fmtBytes(v.limit_bytes)):"Limit cleared — unlimited","ok");loadV()})
+        .catch(function(e){toast(e.message,"err")})};
+      $("#vr").onclick=function(){if(!confirm("Reset the usage counter? Everything transferred so far stops counting against the limit."))return;
+        api("POST","/api/instances/"+id+"/volume/reset").then(function(){toast("Usage counter reset","ok");loadV()}).catch(function(e){toast(e.message,"err")})};
+      loadV();
+    }
     else if(tab==="overview"){
       b.innerHTML='<div class="kv" id="okv"></div><div class="card" style="margin-top:16px"><h3>Latest deployment</h3><div id="odp" class="mut">—</div></div>';
       Promise.all([api("GET","/api/instances/"+id+"/status"),api("GET","/api/instances/"+id+"/metrics")]).then(function(rs){
@@ -433,7 +519,8 @@ function viewInst(id){
           '<div class="it"><div class="k">Connections</div><div class="v">'+(st.core_health?st.core_health.connections:"—")+"</div></div>"+
           '<div class="it"><div class="k">Version</div><div class="v">'+esc(st.core_health&&st.core_health.version||"—")+"</div></div>"+
           '<div class="it"><div class="k">Region</div><div class="v">'+esc(inst.region)+"</div></div>"+
-          '<div class="it"><div class="k">Health</div><div class="v" style="color:'+(st.healthy?"var(--grn)":"var(--fnt)")+'">'+(st.healthy?"healthy":"n/a")+"</div></div>";
+          '<div class="it"><div class="k">Health</div><div class="v" style="color:'+(st.healthy?"var(--grn)":"var(--fnt)")+'">'+(st.healthy?"healthy":"n/a")+"</div></div>"+
+          '<div class="it"><div class="k">Volume</div><div class="v">'+((inst.volume&&inst.volume.limit_bytes)?fmtBytes(inst.volume.limit_bytes):"unlimited")+"</div></div>";
         $("#odp").innerHTML=ld?'<div class="row">'+stEl(ld.status).outerHTML+'<span class="chip">v'+ld.version+'</span><span class="ftx">started '+ago(ld.started_at)+" · "+dur(ld.duration_ms)+"</span></div>"+(ld.error?'<p style="color:var(--red);font-size:12px;margin:7px 0 0">'+esc(ld.error)+"</p>":""):"—";
       }).catch(function(){});
     }

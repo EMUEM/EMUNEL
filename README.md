@@ -8,9 +8,8 @@ ever touching a server.
 GitHub  →  EMUNEL Console  →  Create Instance  →  Deploy  →  Running  →  Endpoint  →  Manage
 ```
 
-EMUNEL carries the proven [Lunel](https://github.com/ArasTey/lunel) platform
-(console, worker, and relay core) forward under a new name and a fresh accent —
-same battle-tested traffic path, rebranded.
+EMUNEL ships a proven, battle-tested traffic path (console, worker and relay
+core) under its own name and a fresh accent.
 
 ---
 
@@ -115,6 +114,6 @@ emunel/
 
 ## License
 
-EMUNEL derives from Lunel by ArasTey (which itself derives from the RVG Gateway
-relay engine by codebox), with the relay engine preserved under compatible
-terms; the console/worker/deploy code is MIT. See [LICENSE](LICENSE).
+EMUNEL's relay engine derives from the RVG Gateway relay engine by codebox
+(see the derived-work notice in [LICENSE](LICENSE)); the console/worker/deploy
+code is MIT.

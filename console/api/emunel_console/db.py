@@ -392,6 +392,14 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     redirect TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS instance_volume (
+    instance_id TEXT PRIMARY KEY,
+    limit_bytes INTEGER,
+    baseline_bytes INTEGER NOT NULL DEFAULT 0,
+    used_cache INTEGER NOT NULL DEFAULT 0,
+    used_at TEXT,
+    updated_at TEXT NOT NULL
+);
 """
 
 POSTGRES_MIGRATIONS = None  # imported lazily below to reuse the SQL list

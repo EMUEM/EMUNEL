@@ -15,6 +15,7 @@ from ..auth import sessions
 from ..config import settings
 from ..db import get_pool
 from ..services import deployments as deploy_svc
+from ..services import volume as volume_svc
 from ..services import workers as worker_svc
 from ..services.domains import generate_domain, slugify, validate_slug
 
@@ -62,7 +63,9 @@ async def list_instances(request: Request, user: asyncpg.Record = Depends(curren
                (SELECT d.kind FROM domains d
                 WHERE d.instance_id = i.id AND d.is_active = TRUE
                 ORDER BY (CASE WHEN d.kind = 'path' THEN 0 ELSE 1 END), d.created_at DESC LIMIT 1) AS domain_kind,
-               (SELECT COUNT(*) FROM deployments dep WHERE dep.instance_id = i.id) AS deployments_count
+               (SELECT COUNT(*) FROM deployments dep WHERE dep.instance_id = i.id) AS deployments_count,
+               (SELECT iv.limit_bytes FROM instance_volume iv
+                WHERE iv.instance_id = i.id) AS volume_limit_bytes
         FROM instances i
         WHERE i.user_id = $1 AND i.status <> 'deleted'
         ORDER BY i.created_at DESC
@@ -121,6 +124,8 @@ async def get_instance(instance_id: str, request: Request,
     if path_dom is not None:
         out["endpoint_url"] = path_dom["url"]
         out["endpoint_path"] = f"/i/{path_dom['domain']}"
+    vol = await pool.fetchrow(
+        "SELECT limit_bytes FROM instance_volume WHERE instance_id = $1", instance_id)
     out.update({
         "config": {
             "protocol": cfg["protocol"],
@@ -131,6 +136,10 @@ async def get_instance(instance_id: str, request: Request,
         } if cfg else None,
         "domains": [dict(d) for d in domains],
         "latest_deployment": dict(latest_dep) if latest_dep else None,
+        "volume": {
+            "limit_bytes": (int(vol["limit_bytes"]) if vol and vol["limit_bytes"] else None),
+            "unlimited": not (vol and vol["limit_bytes"]),
+        },
     })
     return out
 
@@ -261,6 +270,14 @@ async def deploy(instance_id: str, request: Request,
     inst = await owned_instance(pool, user["id"], instance_id)
     if inst["status"] in ("queued", "preparing", "building", "starting", "health_check"):
         raise HTTPException(status_code=409, detail="a deployment is already in progress")
+    reached, info = await volume_svc.limit_reached(pool, instance_id)
+    if reached:
+        raise HTTPException(
+            status_code=409,
+            detail=f"volume limit reached ({volume_svc._fmt(info['used_bytes'])} of "
+                   f"{volume_svc._fmt(info['limit_bytes'])}) — raise or clear the limit "
+                   "on the Volume tab to deploy again",
+        )
     try:
         deployment_id = await deploy_svc.deploy_instance(pool, instance_id)
     except ValueError as exc:
@@ -299,6 +316,14 @@ async def redeploy(instance_id: str, request: Request,
                    user: asyncpg.Record = Depends(current_user)):
     pool = get_pool(request)
     inst = await owned_instance(pool, user["id"], instance_id)
+    reached, info = await volume_svc.limit_reached(pool, instance_id)
+    if reached:
+        raise HTTPException(
+            status_code=409,
+            detail=f"volume limit reached ({volume_svc._fmt(info['used_bytes'])} of "
+                   f"{volume_svc._fmt(info['limit_bytes'])}) — raise or clear the limit "
+                   "on the Volume tab to deploy again",
+        )
     try:
         deployment_id = await deploy_svc.deploy_instance(pool, instance_id, is_redeploy=True)
     except ValueError as exc:
@@ -460,6 +485,46 @@ async def instance_qr(instance_id: str, request: Request,
     from fastapi.responses import Response as _Response
 
     return _Response(content=buf.getvalue(), media_type="image/svg+xml")
+
+
+# ---------------------------------------------------------------------------
+# Volume (data) limit — independent section
+# ---------------------------------------------------------------------------
+@router.get("/instances/{instance_id}/volume")
+async def get_volume(instance_id: str, request: Request,
+                     user: asyncpg.Record = Depends(current_user)):
+    pool = get_pool(request)
+    await owned_instance(pool, user["id"], instance_id)
+    return await volume_svc.get_state(pool, instance_id)
+
+
+@router.put("/instances/{instance_id}/volume")
+async def put_volume(instance_id: str, request: Request,
+                     user: asyncpg.Record = Depends(current_user)):
+    """Set or clear the instance's data cap. An empty/absent value means the
+    Default — unlimited. Accepts {limit_gb} (fractional) or {limit_bytes}."""
+    pool = get_pool(request)
+    inst = await owned_instance(pool, user["id"], instance_id)
+    body = await request.json()
+    try:
+        limit = volume_svc.parse_limit(body if isinstance(body, dict) else {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await volume_svc.set_limit(pool, instance_id, limit,
+                               user_id=user["id"], name=inst["name"])
+    return await volume_svc.get_state(pool, instance_id)
+
+
+@router.post("/instances/{instance_id}/volume/reset")
+async def reset_volume(instance_id: str, request: Request,
+                       user: asyncpg.Record = Depends(current_user)):
+    """Start a fresh accounting period (move everything sent so far below
+    the baseline). The Core's own counters are never touched."""
+    pool = get_pool(request)
+    inst = await owned_instance(pool, user["id"], instance_id)
+    await volume_svc.reset_usage(pool, instance_id,
+                                 user_id=user["id"], name=inst["name"])
+    return await volume_svc.get_state(pool, instance_id)
 
 
 # ---------------------------------------------------------------------------

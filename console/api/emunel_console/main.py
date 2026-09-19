@@ -7,6 +7,7 @@ Serves:
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from pathlib import Path
 
@@ -78,8 +79,19 @@ async def spa_fallback(request, exc):
 @contextlib.asynccontextmanager
 async def lifespan(_app):
     await init_pool()
+    # Volume-limit enforcement (only acts on instances with a cap set).
+    from . import db as _db
+    from .services.volume import enforcement_loop
+
+    volume_task = None
+    try:
+        volume_task = asyncio.create_task(enforcement_loop(_db.db))
+    except Exception as exc:  # never block startup
+        log.warning("volume enforcement loop not started: %s", exc)
     log.info("EMUNEL Console %s started", version.version())
     yield
+    if volume_task is not None:
+        volume_task.cancel()
     await close_db()
     log.info("EMUNEL Console stopped")
 
