@@ -46,7 +46,7 @@ async_session = async_sessionmaker(
 async def init_db() -> None:
     """Initialize database tables."""
     # Import all models so they are registered with Base.metadata
-    from .models import user, node, subscription, audit  # noqa: F401
+    from .models import user, node, subscription, audit, instance  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

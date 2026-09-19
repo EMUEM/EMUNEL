@@ -1,15 +1,13 @@
 """Authentication and authorization primitives for the EMUNEL API."""
 
 from datetime import datetime, timedelta, timezone
-import hashlib
-import hmac
 import secrets
 from typing import Annotated
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,17 +15,29 @@ from ..config import settings
 from ..database import get_db
 from ..models.user import User, UserRole
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+# bcrypt operates on at most 72 bytes; longer passphrases are pre-hashed
+# with SHA-256 (a standard bcrypt construction) instead of truncating.
+_BCRYPT_MAX = 72
+
+
+def _prepare(password: str) -> bytes:
+    raw = password.encode("utf-8")
+    if len(raw) > _BCRYPT_MAX:
+        import hashlib
+
+        raw = hashlib.sha256(raw).digest()
+    return raw
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_prepare(password), bcrypt.gensalt(rounds=12)).decode("ascii")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        return bcrypt.checkpw(_prepare(plain_password), hashed_password.encode("ascii"))
     except (ValueError, TypeError):
         return False
 

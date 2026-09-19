@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Integer,
+    BigInteger,
     Float,
     ForeignKey,
     func,
@@ -34,11 +35,11 @@ class Subscription(Base):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    # Traffic
+    # Traffic (64-bit: 32-bit counters overflow at 4 GiB)
     traffic_limit_gb: Mapped[Optional[float]] = mapped_column(
         Float, nullable=True
     )  # None = unlimited
-    traffic_used_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
     # Duration
     days_limit: Mapped[Optional[int]] = mapped_column(
@@ -66,6 +67,9 @@ class Subscription(Base):
         String(64), unique=True, default=lambda: uuid.uuid4().hex, index=True
     )
 
+    # Monthly reset bookkeeping
+    last_reset_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # Metadata
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -76,6 +80,9 @@ class Subscription(Base):
 
     # Relationships
     user = relationship("User", back_populates="subscriptions")
+    # Links survive subscription deletion (FK is SET NULL) — quota/expiry
+    # enforcement continues at the Core; an admin re-binds or revokes them.
+    links = relationship("Link", back_populates="subscription", lazy="selectin")
 
     @property
     def traffic_limit_bytes(self) -> Optional[int]:
@@ -114,6 +121,21 @@ class Subscription(Base):
         if remaining is None:
             return False
         return remaining <= 0
+
+    @property
+    def effective_status(self) -> str:
+        """ACTIVE -> EXPIRED / QUOTA_EXCEEDED / DISABLED transitions."""
+        if not self.is_active:
+            if self.is_quota_exceeded:
+                return "quota_exceeded"
+            if self.is_expired:
+                return "expired"
+            return "disabled"
+        if self.is_quota_exceeded:
+            return "quota_exceeded"
+        if self.is_expired:
+            return "expired"
+        return "active"
 
     def __repr__(self) -> str:
         return f"<Subscription {self.name} (user={self.user_id[:8]}...)>"
