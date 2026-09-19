@@ -133,14 +133,19 @@ class InstanceManager:
     def _rlimits(memory_mb: int, max_processes: int):
         def apply() -> None:  # runs in the child before exec
             try:
-                mem = memory_mb * 1024 * 1024
+                # RLIMIT_AS caps *virtual* memory; a CPython 3.12 + asyncio +
+                # uvicorn runtime reserves far more VA than RSS, so enforce a
+                # floor to avoid allocator aborts at startup.
+                floor = int(os.environ.get("EMUNEL_CORE_MIN_AS_MB", "512")) * 1024 * 1024
+                mem = max(memory_mb * 1024 * 1024, floor)
                 resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
                 resource.setrlimit(resource.RLIMIT_CPU, (3600, 3660))
                 resource.setrlimit(resource.RLIMIT_FSIZE, (512 * 1024 * 1024, 512 * 1024 * 1024))
-                try:
-                    resource.setrlimit(resource.RLIMIT_NPROC, (max_processes, max_processes))
-                except (ValueError, OSError):
-                    pass
+                # NOTE: RLIMIT_NPROC is deliberately NOT applied. It is a
+                # per-UID limit on Linux (counts every thread of the user,
+                # system-wide), so on shared accounts it kills unrelated
+                # processes and makes thread creation abort the child.
+                # Process-count isolation is the Docker driver's job.
                 os.umask(0o077)
             except (ValueError, OSError):
                 pass
@@ -257,10 +262,12 @@ class InstanceManager:
     # ------------------------------------------------------------------
     async def _wait_healthy_and_ours(self, port: int, token: str, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
+        started = time.monotonic()
         async with httpx.AsyncClient(timeout=2.0) as client:
             while time.monotonic() < deadline:
                 try:
                     r = await client.get(f"http://127.0.0.1:{port}/health")
+                    logger.debug("probe /health on %d -> %s after %.1fs", port, r.status_code, time.monotonic() - started)
                     if r.status_code == 200:
                         # ownership proof: our bearer token must be accepted
                         m = await client.get(
@@ -275,9 +282,10 @@ class InstanceManager:
                             )
                 except DriverError:
                     raise
-                except (httpx.HTTPError, OSError):
-                    pass
+                except (httpx.HTTPError, OSError) as exc:
+                    logger.debug("probe error on %d: %s: %s", port, type(exc).__name__, exc)
                 await asyncio.sleep(0.2)
+        logger.warning("core on port %d never answered health probe within %.0fs", port, timeout)
         return False
 
     async def status(self, instance_id: str) -> dict:

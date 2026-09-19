@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0e17" />
+  <meta name="description" content="EMUNEL — Premium proxy management platform" />
+  <title>EMUNEL</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  <link rel="stylesheet" href="/assets/css/emunel.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- Login screen (shown when unauthenticated) -->
+    <div id="login-screen" class="login-screen hidden">
+      <div class="login-glow"></div>
+      <form class="glass login-card" id="login-form">
+        <div class="login-logo">⚡</div>
+        <h1>EMUNEL</h1>
+        <p class="muted" data-i18n="login.subtitle">Sign in to your console</p>
+        <label class="field">
+          <span data-i18n="login.username">Username</span>
+          <input type="text" id="login-username" autocomplete="username" required />
+        </label>
+        <label class="field">
+          <span data-i18n="login.password">Password</span>
+          <input type="password" id="login-password" autocomplete="current-password" required />
+        </label>
+        <button class="btn primary full" type="submit" data-i18n="login.submit">Sign in</button>
+        <p id="login-error" class="error-text hidden"></p>
+      </form>
+    </div>
+
+    <!-- Authenticated shell -->
+    <div id="shell" class="shell hidden">
+      <aside class="sidebar glass" id="sidebar">
+        <div class="brand">
+          <span class="brand-mark">⚡</span>
+          <span class="brand-name">EMUNEL</span>
+        </div>
+        <nav id="nav" class="nav"></nav>
+        <div class="sidebar-foot">
+          <button class="btn ghost small" id="lang-toggle">فارسی / EN</button>
+          <button class="btn ghost small" id="logout-btn" data-i18n="nav.logout">Sign out</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar glass" id="topbar">
+          <button class="menu-btn" id="menu-btn" aria-label="menu">☰</button>
+          <h2 id="page-title" class="page-title">Dashboard</h2>
+          <div class="topbar-right">
+            <span id="health-dot" class="health-dot" title="health"></span>
+            <span class="user-chip" id="user-chip"></span>
+          </div>
+        </header>
+        <section id="view" class="view" aria-live="polite"></section>
+      </main>
+
+      <nav class="bottom-nav glass" id="bottom-nav"></nav>
+    </div>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" dir="ltr"></div>
+
+  <script type="module" src="/assets/js/app.js"></script>
+</body>
+</html>

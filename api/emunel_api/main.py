@@ -211,13 +211,12 @@ async def ready():
     return {"ready": db_health["status"] == "ok", "database": db_health}
 
 
-@app.get("/", tags=["Root"])
-async def root():
+@app.get("/api", tags=["Root"])
+async def api_root():
     return {
         "name": "EMUNEL",
         "version": "1.0.0",
         "docs": "/api/docs",
-        "dashboard": "/",
         "health": "/health",
     }
 
