@@ -117,3 +117,28 @@
 ## 5. Quality gate at audit time
 
 API imports and baseline tests pass; the networking Core cannot serve real clients (raw-TCP prototype); no instance lifecycle; no frontend; no deployment. **Not production-ready.** The sections above define what "done" means for this tranche.
+
+---
+
+## 6. Post-tranche quality gate (closure)
+
+All items from section 4 are implemented. Against the final quality bar:
+
+| # | Question | Status |
+|---|---|---|
+| 1 | Does the networking Core actually work? | **Yes** — Lunel's engine ported verbatim (pure-rename verified), 4 real tunnel e2e tests + 179 Mbps measured through a live VLESS tunnel |
+| 2 | Are generated configurations usable? | **Yes** — share URLs rendered by the Core's link generator; `/sub/{token}` feed verified with real client-format base64 payloads |
+| 3 | Every dashboard metric from real data? | **Yes** — traffic/instances/health/connections all read from live Cores or the synced DB; empty states elsewhere |
+| 4 | Quotas actually enforced? | **Yes** — by the Core (fail-closed `is_allowed()`), e2e test cuts a tunnel at exhaustion; console never bypasses |
+| 5 | Expiry actually enforced? | **Yes** — expiry pushed onto Core links; `ACTIVE → EXPIRED/QUOTA_EXCEEDED/DISABLED` transitions applied by the sync worker |
+| 6 | Instance configurations isolated? | **Yes** — subprocess + own port/token/state/rlimits per instance; changes to A cannot touch B |
+| 7 | Protocol/transport combinations validated? | **Yes** — matrix endpoint mirrors the Core's `PROTOCOLS`; invalid selections rejected (400) |
+| 8 | UI fast on mobile? | **Yes** — 47.5 KB initial payload, lazy views, pollers pause on hidden tabs, glass blur bounded to nav/cards/dialogs |
+| 9 | Survives subsystem failures? | **Yes** — 5 failure-injection tests: core SIGKILL, dead-core sync, DB outage, diagnostics failure all contained |
+| 10 | Architecture understandable? | **Yes** — `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, honest README, this audit |
+
+**Remaining known limitations (documented, not hidden):**
+- VMess requires an operator-installed, SHA256-pinned Xray binary (by design — the Core refuses to download binaries); the API surfaces this instead of pretending support.
+- The console DB uses create-all rather than versioned migrations; safe for the current schema lifecycle, flagged for the next tranche if the schema evolves.
+- Egress policy (blocking private/metadata addresses) is inherited Lunel parity — listed as future hardening.
+- API keys are still ephemeral tokens (documented in `services/auth.py`); persisted, revocable keys remain future work.

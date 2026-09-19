@@ -15,3 +15,11 @@ os.environ["EMUNEL_SECRET_KEY"] = "integration-test-secret-key-0123456789abcdef"
 os.environ["EMUNEL_JWT_SECRET_KEY"] = "integration-test-jwt-secret-0123456789abcdef"
 os.environ["EMUNEL_ADMIN_PASSWORD"] = "integration-admin-pw-0123456789"
 os.environ["EMUNEL_SYNC_INTERVAL"] = "2"
+
+# Test isolation: start every session with a clean slate (the app has not
+# been imported yet at this point, so the engine has not opened the file).
+import pathlib
+import shutil
+
+pathlib.Path("/tmp/emunel-it.db").unlink(missing_ok=True)
+shutil.rmtree("/tmp/emunel-it-data", ignore_errors=True)
