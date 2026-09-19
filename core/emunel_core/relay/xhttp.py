@@ -146,6 +146,13 @@ class XHttpEngine:
                 return sess
             if len(self.sessions) >= MAX_SESSIONS_GLOBAL or self._per_link_count(uuid) >= MAX_SESSIONS_PER_LINK:
                 raise HTTPException(status_code=429, detail="too many sessions")
+            # Concurrent-IP limit (AHB is_ip_allowed pattern): only enforced
+            # when the link sets one; an IP already attached to the link never
+            # consumes a new slot.
+            link = self.ctx.links.get(uuid)
+            if link is not None and not self.ctx.connections.ip_allowed(link, ip):
+                self.ctx.stats.add_error("ip limit reached")
+                raise HTTPException(status_code=403, detail="ip limit reached")
             conn_id = secrets.token_urlsafe(6)
             self.ctx.connections.register(conn_id, uuid=uuid, ip=ip, transport=f"xhttp-{mode}")
             sess = {

@@ -15,6 +15,7 @@ from ..auth import sessions
 from ..config import settings
 from ..db import get_pool
 from ..services import deployments as deploy_svc
+from ..services import links as links_svc
 from ..services import volume as volume_svc
 from ..services import workers as worker_svc
 from ..services.domains import generate_domain, slugify, validate_slug
@@ -182,6 +183,12 @@ class CreateInstanceBody:
         self.cpu_limit = float(config.get("cpu_limit") or 0.5)
         self.memory_mb = int(config.get("memory_mb") or 256)
         self.core_version = str(config.get("core_version") or "latest")[:40]
+        # AHB-style per-config traffic policy (quota / expiry / speed / IP).
+        # Invalid values surface as 400 before anything is created.
+        try:
+            self.link_policy = links_svc.parse_wizard_policy(config)
+        except links_svc.ValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/instances", status_code=201)
@@ -234,6 +241,13 @@ async def create_instance(request: Request, user: asyncpg.Record = Depends(curre
         instance_id, body.protocol, body.cpu_limit, body.memory_mb, body.core_version,
         ",".join(body.protocols) if body.protocols else body.protocol, now_iso,
     )
+    if body.link_policy:
+        import json as _json
+
+        await pool.execute(
+            "UPDATE instance_configs SET link_policy = $2, updated_at = $3 WHERE instance_id = $1",
+            instance_id, _json.dumps(body.link_policy), now_iso,
+        )
     # Every instance gets a private path endpoint immediately (works on every
     # platform; real hostnames come from the provider where supported).
     # The endpoint token is an AES-GCM ciphertext of the instance id — opaque,
@@ -562,6 +576,96 @@ async def reset_volume(instance_id: str, request: Request,
     await volume_svc.reset_usage(pool, instance_id,
                                  user_id=user["id"], name=inst["name"])
     return await volume_svc.get_state(pool, instance_id)
+
+
+# ---------------------------------------------------------------------------
+# Per-config traffic management (AHB capability set)
+# ---------------------------------------------------------------------------
+@router.get("/instances/{instance_id}/links")
+async def list_links(instance_id: str, request: Request,
+                      user: asyncpg.Record = Depends(current_user)):
+    """All configs of the instance: DB policy merged with the Core's live
+    counters (Total / Used / Remaining, expiry, speed, IP, enable state)."""
+    pool = get_pool(request)
+    await owned_instance(pool, user["id"], instance_id)
+    return await links_svc.list_links(pool, instance_id)
+
+
+@router.post("/instances/{instance_id}/links", status_code=201)
+async def create_link(instance_id: str, request: Request,
+                      user: asyncpg.Record = Depends(current_user)):
+    """Create a config: quota (KB/MB/GB), expiry, speed limit and IP limit
+    are applied for real in the Core from the first byte relayed."""
+    pool = get_pool(request)
+    inst = await owned_instance(pool, user["id"], instance_id)
+    body = await request.json()
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        return await links_svc.create_link(pool, instance_id, body,
+                                           user_id=user["id"], inst_name=inst["name"])
+    except links_svc.ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except links_svc.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except worker_svc.WorkerError as exc:
+        raise HTTPException(status_code=502,
+                             detail=f"instance core unreachable: {str(exc)[:160]}")
+
+
+@router.patch("/instances/{instance_id}/links/{link_uuid}")
+async def patch_link(instance_id: str, link_uuid: str, request: Request,
+                     user: asyncpg.Record = Depends(current_user)):
+    """Edit a config after creation — key-presence semantics (only sent keys
+    change). Propagates to the Core immediately, no redeploy needed."""
+    pool = get_pool(request)
+    inst = await owned_instance(pool, user["id"], instance_id)
+    body = await request.json()
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        return await links_svc.update_link(pool, instance_id, link_uuid, body,
+                                           user_id=user["id"], inst_name=inst["name"])
+    except links_svc.ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except links_svc.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except worker_svc.WorkerError as exc:
+        raise HTTPException(status_code=502,
+                             detail=f"instance core unreachable: {str(exc)[:160]}")
+
+
+@router.post("/instances/{instance_id}/links/{link_uuid}/reset")
+async def reset_link(instance_id: str, link_uuid: str, request: Request,
+                     user: asyncpg.Record = Depends(current_user)):
+    """Start a fresh accounting period for one config (its Core counter
+    drops to zero — other configs are untouched)."""
+    pool = get_pool(request)
+    inst = await owned_instance(pool, user["id"], instance_id)
+    try:
+        return await links_svc.reset_usage(pool, instance_id, link_uuid,
+                                          user_id=user["id"], inst_name=inst["name"])
+    except links_svc.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except worker_svc.WorkerError as exc:
+        raise HTTPException(status_code=502,
+                             detail=f"instance core unreachable: {str(exc)[:160]}")
+
+
+@router.delete("/instances/{instance_id}/links/{link_uuid}")
+async def delete_link(instance_id: str, link_uuid: str, request: Request,
+                      user: asyncpg.Record = Depends(current_user)):
+    pool = get_pool(request)
+    inst = await owned_instance(pool, user["id"], instance_id)
+    try:
+        await links_svc.delete_link(pool, instance_id, link_uuid,
+                                    user_id=user["id"], inst_name=inst["name"])
+    except links_svc.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except worker_svc.WorkerError as exc:
+        raise HTTPException(status_code=502,
+                             detail=f"instance core unreachable: {str(exc)[:160]}")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

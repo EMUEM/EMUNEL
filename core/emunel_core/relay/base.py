@@ -9,13 +9,12 @@ import asyncio
 import socket
 import time
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 
 from ..logging import get
 from ..state import ConnectionTracker, LinkStore, RuntimeStats
 
 log = get("network", "emunel.relay")
-
 SOCK_BUF = 512 * 1024
 
 # Adaptive quota batching (per-connection EWMA), ported from RVG's _QuotaGate.
@@ -29,12 +28,13 @@ class RelayContext:
     """Everything a relay handler is allowed to touch. No panel globals."""
 
     def __init__(self, *, links: LinkStore, connections: ConnectionTracker,
-                 stats: RuntimeStats, save_hook, cfg):
+                 stats: RuntimeStats, save_hook, cfg, speed=None):
         self.links = links
         self.connections = connections
         self.stats = stats
         self._save_hook = save_hook
         self.cfg = cfg
+        self.speed = speed
 
     def schedule_save(self) -> None:
         if self._save_hook is not None:
@@ -67,6 +67,17 @@ class QuotaGate:
             self.ctx.connections.add_bytes(self.conn_id, n)
         return await self.ctx.links.use(self.uuid, n)
 
+    async def _throttle(self, n: int) -> None:
+        """AHB-style per-chunk bandwidth cap: read the link's current rate
+        (dict lookup — cheap) and pace this chunk through its token bucket."""
+        if self.ctx.speed is None or n <= 0:
+            return
+        link = self.ctx.links.get(self.uuid)
+        rate = int(getattr(link, "speed_limit_bytes", 0) or 0) if link else 0
+        if rate <= 0:
+            return
+        await self.ctx.speed.consume(self.uuid, rate, n)
+
     async def add(self, nbytes: int) -> bool:
         if not self.ok:
             return False
@@ -86,7 +97,16 @@ class QuotaGate:
             except Exception as exc:
                 log.error("QuotaGate.add failed uuid=%s: %s", self.uuid[:8], exc)
                 self.ok = False
+            if self.ok:
+                try:
+                    await self._throttle(nbytes)
+                except Exception as exc:  # throttling must never kill a relay
+                    log.error("QuotaGate.throttle failed uuid=%s: %s", self.uuid[:8], exc)
             return self.ok
+        try:
+            await self._throttle(nbytes)
+        except Exception as exc:  # throttling must never kill a relay
+            log.error("QuotaGate.throttle failed uuid=%s: %s", self.uuid[:8], exc)
         return True
 
     async def flush(self) -> bool:

@@ -201,4 +201,18 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE instance_volume ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
         """,
     ),
+    (
+        "0009_instance_links_policy",
+        """
+        ALTER TABLE instance_links ADD COLUMN IF NOT EXISTS protocol TEXT;
+        ALTER TABLE instance_links ADD COLUMN IF NOT EXISTS limit_bytes BIGINT;
+        ALTER TABLE instance_links ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+        ALTER TABLE instance_links ADD COLUMN IF NOT EXISTS speed_limit_bytes BIGINT;
+        ALTER TABLE instance_links ADD COLUMN IF NOT EXISTS ip_limit INTEGER;
+        ALTER TABLE instance_links ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+        ALTER TABLE instance_links ADD COLUMN IF NOT EXISTS used_cache BIGINT;
+        ALTER TABLE instance_links ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;
+        ALTER TABLE instance_configs ADD COLUMN IF NOT EXISTS link_policy TEXT;
+        """,
+    ),
 ]

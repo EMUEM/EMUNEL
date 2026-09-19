@@ -38,7 +38,7 @@ from .relay.shadowsocks import shadowsocks_ws_tunnel
 from .relay.trojan import trojan_ws_tunnel
 from .relay.vless import vless_ws_tunnel
 from .relay.vmess import XrayRuntime, RuntimeUnavailable, verify_binary, vmess_ws_tunnel
-from .state import ConnectionTracker, Link, LinkStore, RuntimeStats, StateStore
+from .state import ConnectionTracker, Link, LinkStore, RuntimeStats, SpeedLimiter, StateStore
 
 log = get("runtime", "emunel.core")
 
@@ -51,6 +51,7 @@ class Core:
         self.links = LinkStore()
         self.connections = ConnectionTracker()
         self.stats = RuntimeStats()
+        self.speed = SpeedLimiter()
         self.store = StateStore(cfg.state_path)
         self.ring = setup_logging(cfg.log_level, cfg.log_json)
         self.ctx = RelayContext(
@@ -59,6 +60,7 @@ class Core:
             stats=self.stats,
             save_hook=self._schedule_save,
             cfg=cfg,
+            speed=self.speed,
         )
 
         from .relay.xhttp import XHttpEngine
@@ -186,6 +188,8 @@ class Core:
                 if link is None:
                     raise HTTPException(status_code=404, detail="link not found")
                 self._apply_link_patch(link, body)
+            if "speed_limit_bytes" in body or "reset_usage" in body:
+                self.speed.reset(uuid)
             self._schedule_save()
             return {"ok": True}
 
@@ -254,6 +258,8 @@ class Core:
             fingerprint=str(body.get("fingerprint") or "chrome"),
             ss_cipher=body.get("ss_cipher"),
             ss_password=body.get("ss_password"),
+            speed_limit_bytes=int(body.get("speed_limit_bytes") or 0),
+            ip_limit=int(body.get("ip_limit") or 0),
         )
         if link.protocol == "shadowsocks":
             link.ss_cipher = link.ss_cipher if link.ss_cipher in (
@@ -274,6 +280,10 @@ class Core:
             link.limit_bytes = max(0, int(body["limit_bytes"] or 0))
         if "expires_at" in body:
             link.expires_at = body["expires_at"]
+        if "speed_limit_bytes" in body:
+            link.speed_limit_bytes = max(0, int(body["speed_limit_bytes"] or 0))
+        if "ip_limit" in body:
+            link.ip_limit = max(0, int(body["ip_limit"] or 0))
 
     def _read_process_metrics(self) -> dict:
         proc = psutil.Process()

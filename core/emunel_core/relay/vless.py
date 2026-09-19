@@ -88,6 +88,11 @@ async def vless_ws_tunnel(ctx: RelayContext, ws: WebSocket, uuid: str) -> None:
         return
 
     ip = ws_client_ip(ws)
+    if not ctx.connections.ip_allowed(link, ip):
+        log.warning("ws rejected uuid=%s ip=%s (ip limit reached)", uuid[:8], ip)
+        ctx.stats.add_error("ip limit reached")
+        await ws.close(code=1008, reason="ip limit reached")
+        return
     conn_id = secrets.token_urlsafe(6)
     ctx.connections.register(conn_id, uuid=uuid, ip=ip, transport="vless-ws")
     log.info("ws open [%s] uuid=%s ip=%s active=%d", conn_id, uuid[:8], ip, ctx.connections.count())

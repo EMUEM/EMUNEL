@@ -175,6 +175,11 @@ async def vmess_ws_tunnel(ctx: RelayContext, runtime: XrayRuntime, ws: WebSocket
     if link is None or link.protocol != "vmess-ws" or not link.is_allowed():
         await ws.close(code=1008, reason="not authorized")
         return
+    _vmess_ip = ws_client_ip(ws)
+    if not ctx.connections.ip_allowed(link, _vmess_ip):
+        ctx.stats.add_error("ip limit reached")
+        await ws.close(code=1008, reason="ip limit reached")
+        return
     conn_id = secrets.token_urlsafe(6)
     tasks = []
 

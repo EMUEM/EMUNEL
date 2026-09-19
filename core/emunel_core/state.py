@@ -40,19 +40,24 @@ class Link:
     The wire semantics are inherited from RVG: each link is identified by a
     UUID, carries a traffic quota and expiry, and can be disabled or enabled
     without restarting the runtime.
+
+    ``speed_limit_bytes`` / ``ip_limit`` (0 = off) mirror the AHB panel's
+    per-config controls: a token-bucket bandwidth cap and a concurrent
+    unique-IP cap enforced at connection accept.
     """
 
     __slots__ = (
         "uuid", "label", "protocol", "active", "limit_bytes", "used_bytes",
         "created_at", "expires_at", "note", "alpn", "fingerprint",
-        "ss_cipher", "ss_password",
+        "ss_cipher", "ss_password", "speed_limit_bytes", "ip_limit",
     )
 
     def __init__(self, uuid: str, label: str, protocol: str, *, active: bool = True,
                  limit_bytes: int = 0, used_bytes: int = 0, created_at: str | None = None,
                  expires_at: str | None = None, note: str = "",
                  alpn: str = "h2,http/1.1", fingerprint: str = "chrome",
-                 ss_cipher: str | None = None, ss_password: str | None = None):
+                 ss_cipher: str | None = None, ss_password: str | None = None,
+                 speed_limit_bytes: int = 0, ip_limit: int = 0):
         self.uuid = uuid
         self.label = label[:80]
         self.protocol = protocol
@@ -70,6 +75,8 @@ class Link:
         self.fingerprint = fingerprint if fingerprint in ("chrome", "firefox", "ios") else "chrome"
         self.ss_cipher = ss_cipher
         self.ss_password = ss_password
+        self.speed_limit_bytes = max(0, int(speed_limit_bytes or 0))
+        self.ip_limit = max(0, int(ip_limit or 0))
 
     # ---- policy ---------------------------------------------------------
     def is_expired(self, now: datetime | None = None) -> bool:
@@ -101,6 +108,8 @@ class Link:
             "alpn": self.alpn,
             "fingerprint": self.fingerprint,
             "expired": self.is_expired(),
+            "speed_limit_bytes": self.speed_limit_bytes,
+            "ip_limit": self.ip_limit,
         }
         if include_secret:
             data["ss_cipher"] = self.ss_cipher
@@ -181,6 +190,26 @@ class ConnectionTracker:
         self._conns[conn_id] = conn
         return conn
 
+    def unique_ips_for(self, uuid: str) -> set[str]:
+        """Distinct source IPs currently connected on a link (AHB's
+        unique_ips_for_uuid pattern; backs the concurrent-IP limit)."""
+        return {
+            c["ip"] for c in self._conns.values()
+            if c.get("uuid") == uuid and c.get("ip")
+        }
+
+    def ip_allowed(self, link, ip: str) -> bool:
+        """Concurrent-IP gate (AHB's is_ip_allowed pattern). limit<=0 →
+        unlimited. An IP already connected to the link never consumes a new
+        slot."""
+        limit = int(getattr(link, "ip_limit", 0) or 0)
+        if limit <= 0:
+            return True
+        ips = self.unique_ips_for(link.uuid)
+        if ip in ips:
+            return True
+        return len(ips) < limit
+
     def add_bytes(self, conn_id: str, n: int) -> None:
         conn = self._conns.get(conn_id)
         if conn is not None:
@@ -219,6 +248,73 @@ class ConnectionTracker:
             })
         out.sort(key=lambda x: x["last_connected_at"], reverse=True)
         return out
+
+
+class _TokenBucket:
+    """Single-link token bucket (AHB speed_limit.py pattern).
+
+    One deliberate fix over the AHB original: chunks LARGER than the burst
+    capacity are consumed slice-by-slice instead of waiting for a single
+    lump that could never accumulate (the refill is capped at capacity, so
+    ``tokens >= n`` would never become true for n > capacity)."""
+
+    MIN_RATE = 1024           # 1 KB/s floor — below this, relays stall
+    MIN_BURST = 16 * 1024     # 16 KB burst floor
+
+    __slots__ = ("rate", "capacity", "tokens", "last")
+
+    def __init__(self, rate_bytes_per_sec: float):
+        self.rate = max(float(rate_bytes_per_sec), float(self.MIN_RATE))
+        self.capacity = max(self.rate, float(self.MIN_BURST))
+        self.tokens = self.capacity
+        self.last = time.monotonic()
+
+    def _refill(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self.last
+        if elapsed > 0:
+            self.last = now
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+
+    async def consume(self, n: int) -> None:
+        n = int(n)
+        while n > 0:
+            self._refill()
+            take = min(n, int(self.tokens))
+            if take > 0:
+                self.tokens -= take
+                n -= take
+                if n <= 0:
+                    return
+            # wait until at most one full bucket's worth is available —
+            # never block on a lump bigger than the burst capacity
+            needed = min(n, int(self.capacity))
+            deficit = needed - self.tokens
+            wait = deficit / self.rate if deficit > 0 else 0.004
+            await asyncio.sleep(min(max(wait, 0.004), 0.5))
+
+
+class SpeedLimiter:
+    """Per-link bandwidth caps. Buckets are keyed by link UUID and rebuilt
+    when the operator changes the rate (mirrors AHB's _get_bucket)."""
+
+    def __init__(self):
+        self._buckets: dict[str, _TokenBucket] = {}
+        self._lock = asyncio.Lock()
+
+    async def consume(self, uuid: str, rate: int, n: int) -> None:
+        """Throttle ``n`` bytes to ``rate`` bytes/sec. rate<=0 → no limit."""
+        if rate <= 0 or n <= 0:
+            return
+        async with self._lock:
+            bucket = self._buckets.get(uuid)
+            if bucket is None or bucket.rate != max(float(rate), float(_TokenBucket.MIN_RATE)):
+                bucket = _TokenBucket(rate)
+                self._buckets[uuid] = bucket
+        await bucket.consume(n)
+
+    def reset(self, uuid: str) -> None:
+        self._buckets.pop(uuid, None)
 
 
 class RuntimeStats:

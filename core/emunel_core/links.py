@@ -19,6 +19,7 @@ def _with_prefix(link: Link, prefix: str) -> Link:
         created_at=link.created_at, expires_at=link.expires_at, note=link.note,
         alpn=link.alpn, fingerprint=link.fingerprint,
         ss_cipher=link.ss_cipher, ss_password=link.ss_password,
+        speed_limit_bytes=link.speed_limit_bytes, ip_limit=link.ip_limit,
     )
     return clone
 

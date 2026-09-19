@@ -60,6 +60,48 @@ The browser subscription page renders the same numbers in its Remaining/Time
 stat cards and an Active/Limited/Expired status. Values propagate live on
 every fetch — no instance recreation needed.
 
+When no instance-level volume/time limit is set, the per-config quotas take
+over: `total` = the sum of the configs' caps, `expire` = the earliest config
+expiry (AHB group-subscription semantics). The subscription stays honestly
+unlimited only when nothing anywhere sets a limit. The browser page also
+renders a per-config quota strip inside every config card (usage meter,
+remaining, validity, speed, IP limit, status).
+
+### Per-config traffic management (AHB capability set)
+
+Every config (link) carries its own traffic policy, enforced for real by the
+Core at relay time — quota accounting is per relayed chunk, expiry/active are
+checked at connection accept and on every chunk, the speed cap is a token
+bucket, and the concurrent-IP limit counts distinct client IPs. Empty values
+always mean the Default — unlimited.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/instances/:id/links` | All configs: DB policy merged with the Core's live counters (Total/Used/Remaining, expiry, speed, IP, status `active|limited|expired|disabled`) |
+| POST | `/api/instances/:id/links` | Create a config: `{protocol, label?, limit?, unit?: KB\|MB\|GB\|TB, expiry_days? | expires_at?, speed_mbps?, ip_limit?}` — live immediately, no redeploy |
+| PATCH | `/api/instances/:id/links/:uuid` | Edit after creation — key-presence semantics: only sent keys change. Same fields as create, plus `{active: bool}`. `{limit: null}` clears the quota |
+| POST | `/api/instances/:id/links/:uuid/reset` | Fresh accounting period for one config (its Core counter drops to zero) |
+| DELETE | `/api/instances/:id/links/:uuid` | Delete the config (clients using it stop working immediately) |
+
+Semantics (shared with the instance-level volume feature):
+
+* quota — `limit` + `unit` (KB/MB/GB/TB) or raw `limit_bytes`; empty/0/null → unlimited
+* expiry — `expiry_days` (fractional, from now) or absolute `expires_at` (ISO); empty → never
+* speed — `speed_mbps` → bytes/s (Mbps × 1024²/8); empty → unlimited
+* IP — `ip_limit` concurrent unique client IPs; empty → unlimited
+* wizard — `POST /api/instances` accepts the same fields inside `config`
+  (`{limit, unit, expiry_days, speed_mbps, ip_limit}`); they are applied to
+  every config provisioned at deploy time and stored in
+  `instance_configs.link_policy`
+
+Persistence: the Console database (`instance_links` policy columns,
+`instance_configs.link_policy`) is the policy source of truth; the Core
+persists per-config usage counters in its state file. After every deploy or
+redeploy the Console reconciles the Core against the database — links lost
+to a wiped state file are restored with the same UUIDs, quotas and counters,
+and drifted policies are re-applied. Editing a quota propagates to a running
+instance immediately, without recreation.
+
 Protocols: `vless-ws`, `trojan-ws`, `shadowsocks`, `xhttp-packet-up`,
 `xhttp-stream-up`.
 

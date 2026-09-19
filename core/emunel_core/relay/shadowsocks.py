@@ -245,6 +245,11 @@ async def shadowsocks_ws_tunnel(ctx: RelayContext, ws: WebSocket) -> None:
             return
 
         first_chunk = bytes(raw)
+        if not ctx.connections.ip_allowed(link, ip):
+            log.info("ss rejected [%s] ip=%s (ip limit reached)", conn_id, ip)
+            ctx.stats.add_error("ip limit reached")
+            await ws.close(code=1008, reason="ip limit reached")
+            return
         ctx.connections.register(conn_id, uuid=link.uuid, ip=ip, transport="shadowsocks-ws")
         log.info("ss open [%s] uuid=%s ip=%s", conn_id, link.uuid[:8], ip)
 

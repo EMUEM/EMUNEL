@@ -144,6 +144,10 @@ button,.head,.import-head,.qr-plate,.user-area,.badge,.num,.os-title,.label{-web
 .detail-item{padding:8px;border-radius:9px;background:var(--soft);min-width:0}
 .detail-item label{display:block;font-size:8px;color:var(--dim);text-transform:uppercase;font-weight:700;letter-spacing:.3px}
 .detail-item span{display:block;margin-top:3px;font:10px ui-monospace,Menlo,monospace;color:var(--muted);direction:ltr;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quota-grid{margin-top:-3px}
+.quota-grid .detail-item.quota{grid-column:1/-1}
+.quota-grid .bar{height:5px;border-radius:5px;background:var(--track);overflow:hidden;grid-column:1/-1;align-self:center}
+.quota-grid .bar .fill{height:100%;border-radius:5px}
 .link-row{display:flex;gap:8px;align-items:center}
 .link-row input{flex:1;min-width:0;padding:9px 11px;border-radius:9px;border:1px solid var(--panel-border);background:var(--inset);color:var(--code);font:9px ui-monospace,Menlo,monospace;direction:ltr}
 .copy-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 14px;height:33px;border-radius:9px;border:1px solid var(--line);background:var(--raise);color:var(--fg);font:600 10px inherit;cursor:pointer;white-space:nowrap;transition:background-color var(--t1) var(--e2),color var(--t1) var(--e2),transform var(--t1) var(--e2)}

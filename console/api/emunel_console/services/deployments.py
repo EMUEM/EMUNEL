@@ -296,8 +296,10 @@ async def _pipeline_local(pool: asyncpg.Pool, deployment_id: str, inst: dict) ->
 
 async def _provision_default_link(pool: asyncpg.Pool, deployment_id: str,
                                   instance_id: str) -> None:
-    """Create the default proxy link inside the freshly deployed Core and
-    record it. Idempotent: skips when the instance already has a link."""
+    """Create the default proxy links inside the freshly deployed Core and
+    record them. Idempotent: skips when the instance already has a link.
+    The wizard's traffic policy (quota / expiry / speed / IP cap) is applied
+    to every provisioned link for real."""
     try:
         from ..config import settings as _settings
 
@@ -310,6 +312,10 @@ async def _provision_default_link(pool: asyncpg.Pool, deployment_id: str,
             "SELECT COUNT(*) FROM instance_links WHERE instance_id = $1", instance_id
         )
         if row is None or existing:
+            # Still reconcile: a redeploy may have lost the Core's state file —
+            # re-push the Console DB policies so configs survive with the
+            # same UUIDs, quotas and counters.
+            await _reconcile_links(pool, deployment_id, instance_id)
             return
         dep = await pool.fetchrow(
             "SELECT node_id FROM deployments WHERE id = $1", deployment_id
@@ -317,10 +323,11 @@ async def _provision_default_link(pool: asyncpg.Pool, deployment_id: str,
         node_url = worker_svc.worker_url_for(
             (dep["node_id"] if dep else None) or _settings.default_worker_node
         )
-        proto_row = await pool.fetchrow(
-            "SELECT protocols FROM instance_configs WHERE instance_id = $1", instance_id
+        cfg_row = await pool.fetchrow(
+            "SELECT protocols, link_policy FROM instance_configs WHERE instance_id = $1",
+            instance_id,
         )
-        selected = (proto_row["protocols"].split(",") if proto_row and proto_row["protocols"] else None) \
+        selected = (cfg_row["protocols"].split(",") if cfg_row and cfg_row["protocols"] else None) \
             or [row["protocol"] or "vless-ws"]
         pretty_map = {"vless-ws": "VLESS", "trojan-ws": "Trojan",
                       "shadowsocks": "Shadowsocks", "xhttp-packet-up": "xHTTP",
@@ -329,6 +336,15 @@ async def _provision_default_link(pool: asyncpg.Pool, deployment_id: str,
                       "trojan-xhttp-stream-up": "Trojan xHTTP stream-up",
                       "vmess-ws": "VMess"}
         wanted = [(p, pretty_map.get(p, p)) for p in selected]
+        # Wizard traffic policy: {limit_bytes, expires_at, speed_limit_bytes, ip_limit}
+        policy = {}
+        if cfg_row and cfg_row["link_policy"]:
+            try:
+                import json as _json
+
+                policy = _json.loads(cfg_row["link_policy"]) or {}
+            except (ValueError, TypeError):
+                policy = {}
         created = 0
         skipped = []
         async with httpx.AsyncClient(timeout=30) as client:
@@ -336,7 +352,11 @@ async def _provision_default_link(pool: asyncpg.Pool, deployment_id: str,
                 resp = await client.post(
                     f"{node_url.rstrip('/')}/worker/api/instances/{instance_id}"
                     f"/proxy/core/api/links",
-                    json={"label": f"{row['name']} · {pretty}", "protocol": proto},
+                    json={"label": f"{row['name']} · {pretty}", "protocol": proto,
+                          "limit_bytes": int(policy.get("limit_bytes") or 0),
+                          "expires_at": policy.get("expires_at"),
+                          "speed_limit_bytes": int(policy.get("speed_limit_bytes") or 0),
+                          "ip_limit": int(policy.get("ip_limit") or 0)},
                     headers={"Authorization": f"Bearer {_settings.worker_token}",
                              "Content-Type": "application/json"},
                 )
@@ -351,10 +371,16 @@ async def _provision_default_link(pool: asyncpg.Pool, deployment_id: str,
                     continue
                 link_uuid = resp.json()["uuid"]
                 await pool.execute(
-                    "INSERT INTO instance_links (id, instance_id, link_uuid, label, created_at) "
-                    "VALUES ($1, $2, $3, $4, $5)",
+                    "INSERT INTO instance_links (id, instance_id, link_uuid, label, protocol, "
+                    "limit_bytes, expires_at, speed_limit_bytes, ip_limit, active, used_cache, "
+                    "used_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 0, NULL, $10)",
                     secrets.token_hex(16), instance_id, link_uuid,
-                    f"{row['name']} · {pretty}", datetime.now(timezone.utc),
+                    f"{row['name']} · {pretty}", proto,
+                    int(policy.get("limit_bytes") or 0) or None,
+                    policy.get("expires_at"),
+                    int(policy.get("speed_limit_bytes") or 0) or None,
+                    int(policy.get("ip_limit") or 0) or None,
+                    datetime.now(timezone.utc),
                 )
                 created += 1
         if created:
@@ -363,9 +389,23 @@ async def _provision_default_link(pool: asyncpg.Pool, deployment_id: str,
                        + (f" ({len(skipped)} skipped)" if skipped else ""), "ok")
         elif skipped:
             raise RuntimeError("no protocol could be provisioned; see deployment logs")
+        await _reconcile_links(pool, deployment_id, instance_id)
     except Exception as exc:
         await _log(pool, deployment_id, f"link provisioning failed: {exc}", "error")
         raise RuntimeError("selected protocol could not be provisioned; check Core runtime configuration") from exc
+
+
+async def _reconcile_links(pool: asyncpg.Pool, deployment_id: str,
+                          instance_id: str) -> None:
+    """After health: make the Core match the Console DB — restore links the
+    Core lost (fresh state file / new service) and re-apply drifted policies.
+    Best-effort; never fails a healthy deployment."""
+    try:
+        from . import links as links_svc
+
+        await links_svc.reconcile_after_deploy(pool, instance_id, None)
+    except Exception as exc:
+        await _log(pool, deployment_id, f"link reconcile skipped: {exc}", "warn")
 
 
 # ---------------------------------------------------------------------------

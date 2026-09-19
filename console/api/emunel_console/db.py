@@ -304,6 +304,7 @@ CREATE TABLE IF NOT EXISTS instance_configs (
     memory_mb INTEGER NOT NULL DEFAULT 256,
     max_processes INTEGER NOT NULL DEFAULT 128,
     link_quota_bytes INTEGER NOT NULL DEFAULT 0,
+    link_policy TEXT,
     core_version TEXT NOT NULL DEFAULT 'latest',
     protocols TEXT,
     updated_at TEXT NOT NULL
@@ -363,6 +364,14 @@ CREATE TABLE IF NOT EXISTS instance_links (
     instance_id TEXT NOT NULL,
     link_uuid TEXT NOT NULL,
     label TEXT NOT NULL DEFAULT '',
+    protocol TEXT,
+    limit_bytes INTEGER,
+    expires_at TEXT,
+    speed_limit_bytes INTEGER,
+    ip_limit INTEGER,
+    active INTEGER NOT NULL DEFAULT 1,
+    used_cache INTEGER,
+    used_at TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_instance_links_instance ON instance_links(instance_id);
@@ -410,6 +419,15 @@ CREATE TABLE IF NOT EXISTS instance_volume (
 SQLITE_PATCHES = (
     ("instance_volume", "time_limit_days", "REAL"),
     ("instance_volume", "expires_at", "TEXT"),
+    ("instance_links", "protocol", "TEXT"),
+    ("instance_links", "limit_bytes", "INTEGER"),
+    ("instance_links", "expires_at", "TEXT"),
+    ("instance_links", "speed_limit_bytes", "INTEGER"),
+    ("instance_links", "ip_limit", "INTEGER"),
+    ("instance_links", "active", "INTEGER NOT NULL DEFAULT 1"),
+    ("instance_links", "used_cache", "INTEGER"),
+    ("instance_links", "used_at", "TEXT"),
+    ("instance_configs", "link_policy", "TEXT"),
 )
 
 

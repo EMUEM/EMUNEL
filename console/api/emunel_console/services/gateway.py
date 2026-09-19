@@ -317,14 +317,40 @@ async def instance_subscription(token: str, request: Request):
         return _page("Unavailable", f"Could not read the instance configs: {str(exc)[:160]}",
                      status=502)
 
-    # Real quota state — the same numbers the panel shows (volume cap, usage,
-    # time limit). Feeds both the client-parsed header and the HTML page.
+    # Real quota state — the same numbers the panel shows. Two levels:
+    # 1. the instance envelope (volume cap / time limit), and
+    # 2. when no envelope is set, the aggregate of the per-config quotas
+    #    (AHB group-subscription semantics: sum of caps, earliest expiry).
+    # Feeds both the client-parsed header and the HTML page; unlimited only
+    # when nothing anywhere sets a limit.
     from . import volume as _volume_svc
 
     try:
         quota = await _volume_svc.get_state(pool, target["instance_id"])
     except Exception:
         quota = None
+    if quota is not None and not quota.get("limit_bytes") and not quota.get("expires_at"):
+        # No instance envelope — fall back to the per-config aggregate.
+        try:
+            from . import links as _links_svc
+
+            aggregate = await _links_svc.aggregate_quota(
+                pool, target["instance_id"], quota.get("used_bytes") or 0
+            )
+        except Exception:
+            aggregate = None
+        if aggregate is not None:
+            quota = aggregate
+
+    # Per-config real state for the HTML page (usage meters per config card).
+    link_states: dict = {}
+    try:
+        from . import links as _links_svc
+
+        states = await _links_svc.list_links(pool, target["instance_id"], live=True)
+        link_states = {l["uuid"]: l for l in states.get("links", [])}
+    except Exception:
+        link_states = {}
 
     title = f"EMUNEL \u00b7 {inst['name']}"
     from fastapi.responses import Response as _Response
@@ -344,7 +370,8 @@ async def instance_subscription(token: str, request: Request):
         from fastapi.responses import HTMLResponse
 
         return HTMLResponse(_sub_html_page(title, configs, host, f"/i/{token}/sub",
-                                           qr_path=f"/i/{token}/api/qr", quota=quota))
+                                           qr_path=f"/i/{token}/api/qr", quota=quota,
+                                           link_states=link_states))
 
     # The quota the client sees is the instance's REAL state: total = the
     # volume cap, expire = the time limit, download = current usage. 0 (or

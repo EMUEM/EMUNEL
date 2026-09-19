@@ -20,7 +20,65 @@ def _template() -> str:
     return Path(__file__).with_name("subscription.html").read_text(encoding="utf-8")
 
 
-def _config_card(config: dict, number: int) -> str:
+def _quota_row(state: dict | None) -> str:
+    """Per-config real quota strip inside a config card (AHB-style):
+    usage meter + limit / used / remaining, expiry, status."""
+    if not state:
+        return ""
+    limit = int(state.get("limit_bytes") or 0)
+    used = int(state.get("used_bytes") or 0)
+    parts = []
+    status = state.get("status") or "active"
+    label = {"active": "Active", "limited": "Limited — quota reached",
+             "expired": "Expired", "disabled": "Disabled"}.get(status, status)
+    color = {"active": "var(--blue)", "limited": "var(--amber)",
+             "expired": "var(--red)", "disabled": "var(--red)"}.get(status, "var(--blue)")
+    if limit:
+        pct = float(state.get("percent") or 0.0)
+        bar_color = "red" if state.get("exceeded") else ("amber" if pct > 80 else "blue")
+        width = max(0.0, min(100.0, pct))
+        parts.append(
+            f'<div class="detail-item quota"><label>Quota</label>'
+            f'<span>{_fmt_bytes(used)} of {_fmt_bytes(limit)} · '
+            f'{_fmt_bytes(max(0, limit - used))} left · {pct:.1f}%</span></div>'
+            f'<div class="bar" style="margin:6px 0 2px"><div class="fill" '
+            f'style="width:{width:.1f}%;background:var(--{bar_color})"></div></div>'
+        )
+    else:
+        parts.append(
+            f'<div class="detail-item"><label>Quota</label>'
+            f'<span>{_fmt_bytes(used)} used · unlimited</span></div>'
+        )
+    if state.get("expires_at"):
+        try:
+            dt = datetime.fromisoformat(str(state["expires_at"]).replace("Z", "+00:00"))
+            until = dt.strftime("%b %d, %Y")
+            seconds = state.get("seconds_remaining")
+            left = _fmt_left(float(seconds)) if seconds is not None else "—"
+            parts.append(
+                f'<div class="detail-item"><label>Valid</label>'
+                f'<span>{left} · until {until}</span></div>'
+            )
+        except ValueError:
+            pass
+    speed = int(state.get("speed_limit_bytes") or 0)
+    if speed:
+        mbits = speed * 8 / 1024 / 1024
+        parts.append(f'<div class="detail-item"><label>Speed</label><span>{mbits:g} Mbps</span></div>')
+    ip_limit = int(state.get("ip_limit") or 0)
+    if ip_limit:
+        parts.append(f'<div class="detail-item"><label>IP limit</label><span>{ip_limit}</span></div>')
+    if status != "active":
+        parts.append(
+            f'<div class="detail-item"><label>Status</label>'
+            f'<span style="color:{color};font-weight:600">{escape(label)}</span></div>'
+        )
+    if not parts:
+        return ""
+    return f'<div class="details-grid quota-grid">{"".join(parts)}</div>'
+
+
+def _config_card(config: dict, number: int, link_state: dict | None = None) -> str:
     url = str(config["share_url"])
     if url.startswith("vmess://"):
         import base64
@@ -60,6 +118,7 @@ def _config_card(config: dict, number: int) -> str:
         f'<div class="detail-item"><label>{label}</label><span>{escape(value)}</span></div>'
         for label, value in details if value
     )
+    quota_html = _quota_row(link_state)
     badges = f'<span class="badge {escape(protocol.lower())}">{escape(protocol)}</span>'
     if transport and transport != protocol:
         badges += f'<span class="badge {escape(transport.lower())}">{escape(transport)}</span>'
@@ -73,6 +132,7 @@ def _config_card(config: dict, number: int) -> str:
      </div>
      <div class="acc"><div class="clip"><div class="inner cfg-inner">
       <div class="details-grid">{detail_html}</div>
+      {quota_html}
       <div class="link-row">
        <input type="text" readonly value="{escape(url)}" id="link-{number}">
        <button type="button" class="copy-btn copy-single" data-num="{number}">
@@ -176,17 +236,21 @@ def _status_line(quota: dict | None) -> tuple[str, str]:
 
 
 def render_subscription(title: str, configs: list, host: str, sub_path: str,
-                        qr_path: str = "", quota: dict | None = None) -> str:
+                        qr_path: str = "", quota: dict | None = None,
+                        link_states: dict | None = None) -> str:
     """Keep browser-announced hosts when clients import the copied subscription.
 
-    quota is the instance's real volume/time state (volume.get_state); it
-    renders the Remaining/Time stat cards and the status dot. None keeps the
-    legacy unlimited/not-reported presentation."""
+    quota is the effective quota state (instance envelope, or the aggregate
+    of the per-config caps when no envelope is set); it renders the
+    Remaining/Time stat cards and the status dot. None keeps the legacy
+    unlimited/not-reported presentation. link_states (uuid → state) adds the
+    per-config real quota strip inside each config card."""
     sub_url = f"https://{host}{sub_path}?{urlencode({'host': host})}"
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=0)
     qr.add_data(sub_url)
     qr.make(fit=True)
     now = datetime.now(timezone.utc)
+    link_states = link_states or {}
     cards = ([{"share_url": TELEGRAM_CONFIG}] if TELEGRAM_CONFIG else []) + list(configs)
     status_class, status_label = _status_line(quota)
     values = {
@@ -200,7 +264,9 @@ def render_subscription(title: str, configs: list, host: str, sub_path: str,
         "SUB_URL_JSON": json.dumps(sub_url).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"),
         "QR_MATRIX": json.dumps(qr.get_matrix(), separators=(",", ":")),
         "COUNT": str(len(configs)),
-        "CONFIG_CARDS": "\n".join(_config_card(c, i) for i, c in enumerate(cards, 1))
+        "CONFIG_CARDS": "\n".join(
+            _config_card(c, i, link_states.get(c.get("uuid"))) for i, c in enumerate(cards, 1)
+        )
             + ('' if configs else '<div class="empty-configs">No configurations available</div>'),
         "YEAR": str(now.year),
         "UPDATED": now.strftime("%Y/%m/%d %H:%M:%S UTC"),

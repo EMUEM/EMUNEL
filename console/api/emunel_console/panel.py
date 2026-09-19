@@ -336,17 +336,17 @@ var PROTOS=[["vless-ws","VLESS over WebSocket","Widest client support (v2rayNG, 
 ["vmess-ws","VMess AEAD over WebSocket","Requires an operator-installed, SHA256-pinned Xray executable on the worker."]];
 function viewWizard(){
   shell("new");
-  var m={name:"",region:"local",protocol:"vless-ws",protocols:["vless-ws"],cpu:0.5,mem:256},step=0;
+  var m={name:"",region:"local",protocol:"vless-ws",protocols:["vless-ws"],cpu:0.5,mem:256,limit:"",unit:"GB",expiry:"",speed:"",ip:""},step=0;
   var v=$("#view");
   v.innerHTML='<div class="ph"><div><h1>Create Instance</h1><div class="sub">Name it, pick a protocol, deploy. No servers, no YAML.</div></div></div>'+
     '<div class="row" id="stb" style="gap:4px;margin-bottom:20px"></div><div class="card" id="sb"></div>'+
     '<div class="row" style="margin-top:18px"><button class="btn" id="bk">Back</button><div class="grow"></div><button class="btn pri" id="nx">Continue</button></div>';
-  var steps=["Name","Region","Config","Networking","Review","Deploy"];
+  var steps=["Name","Region","Config","Networking","Limits","Review","Deploy"];
   function bar(){ $("#stb").innerHTML=steps.map(function(s,i){return '<div class="grow" style="height:3px;border-radius:2px;background:'+(i<step?"var(--acc)":i===step?"var(--blu)":"var(--bd)")+'"></div>'}).join("")}
   function show(){
     bar();var b=$("#sb");
-    $("#bk").disabled=step===0;$("#nx").textContent=step===4?"Deploy":step===5?"Go to instance":"Continue";
-    $("#nx").classList.toggle("pri",step!==5);
+    $("#bk").disabled=step===0;$("#nx").textContent=step===5?"Deploy":step===6?"Go to instance":"Continue";
+    $("#nx").classList.toggle("pri",step!==6);
     if(step===0){b.innerHTML='<h3 style="margin:0 0 10px">Step 1 — Name</h3><div class="fld"><label>Instance name</label><input class="inp" id="f-n" maxlength="60" placeholder="e.g. Production" value="'+esc(m.name)+'"></div><div class="ftx" style="font-size:12px">Letters, numbers, dashes. Up to 25 instances per account.</div>';
       $("#f-n").oninput=function(e){m.name=e.target.value}}
     else if(step===1){b.innerHTML='<h3 style="margin:0 0 10px">Step 2 — Region</h3><div class="optg" id="rg"><div class="opt sel" data-id="local"><div class="t">Local node</div><div class="d">Default worker on this platform</div></div></div>';
@@ -358,14 +358,40 @@ function viewWizard(){
         else{m.protocols.push(o.dataset.id);o.classList.add("sel")}}});
       $("#f-c").onchange=function(e){m.cpu=parseFloat(e.target.value)};$("#f-m").onchange=function(e){m.mem=parseInt(e.target.value,10)}}
     else if(step===3){b.innerHTML='<h3 style="margin:0 0 10px">Step 4 — Networking</h3><div class="card" style="background:var(--bg2)"><div class="row"><span class="chip">https</span><span class="mono">&lt;console-host&gt;/i/&lt;private-token&gt;</span></div><p class="ftx" style="margin:9px 0 0;font-size:12.5px">WebSocket, xHTTP and all EMUNEL protocols work through this endpoint with automatic TLS. Ready on deploy.</p></div>'}
-    else if(step===4){b.innerHTML='<h3 style="margin:0 0 10px">Step 5 — Review</h3><table class="tbl"><tr><td style="color:var(--fnt);width:40%">Name</td><td class="mono">'+(esc(m.name)||"—")+"</td></tr><tr><td style='color:var(--fnt)'>Region</td><td class='mono'>"+esc(m.region)+"</td></tr><tr><td style='color:var(--fnt)'>Protocols</td><td class='mono'>"+esc(m.protocols.join(", "))+"</td></tr><tr><td style='color:var(--fnt)'>CPU / Memory</td><td class='mono'>"+m.cpu+" core / "+m.mem+" MB</td></tr></table>"}
-    else if(step===5){b.innerHTML='<h3 style="margin:0 0 10px">Step 6 — Deploy</h3><div class="kv"><div class="it"><div class="k">Status</div><div class="v" id="ds">Deploying…</div></div><div class="it"><div class="k">Deployment</div><div class="v" id="di">—</div></div></div><div class="term" style="margin-top:14px"><div class="tbody" id="dl" style="height:220px"><div class="ll"><span class="t">»</span> queued</div></div></div>'}
+    else if(step===4){b.innerHTML='<h3 style="margin:0 0 10px">Step 5 — Traffic limits (optional)</h3><p class="mut" style="font-size:12.5px;margin:6px 0 14px">Applied to every config of this instance and enforced for real by the Core. Leave everything empty for the default — unlimited.</p>'+
+      '<div class="row" style="flex-wrap:wrap"><div class="fld" style="width:170px;margin:0"><label>Traffic quota</label><input class="inp" id="f-l" type="number" min="0" step="any" placeholder="unlimited" value="'+esc(m.limit)+'"></div>'+
+      '<div class="fld" style="width:90px;margin:0"><label>Unit</label><select class="inp" id="f-u">'+["KB","MB","GB","TB"].map(function(u){return '<option value="'+u+'" '+(m.unit===u?"selected":"")+">"+u+"</option>"}).join("")+"</select></div>"+
+      '<div class="fld" style="width:150px;margin:0"><label>Expiry (days)</label><input class="inp" id="f-e" type="number" min="0" step="any" placeholder="never" value="'+esc(m.expiry)+'"></div>'+
+      '<div class="fld" style="width:140px;margin:0"><label>Speed (Mbps)</label><input class="inp" id="f-s" type="number" min="0" step="any" placeholder="unlimited" value="'+esc(m.speed)+'"></div>'+
+      '<div class="fld" style="width:130px;margin:0"><label>IP limit</label><input class="inp" id="f-i" type="number" min="0" step="1" placeholder="unlimited" value="'+esc(m.ip)+'"></div></div>'+
+      '<div class="row" style="margin-top:10px;gap:6px" id="lp"></div>'+
+      '<p class="fn" style="margin-top:10px">Tip: everything stays editable on the instance Config tab — changing a quota propagates without redeploying.</p>';
+      var LP=[["100 MB",100,"MB"],["1 GB",1,"GB"],["5 GB",5,"GB"],["10 GB",10,"GB"],["50 GB",50,"GB"],["7 days",0,""]];
+      $("#lp").innerHTML=LP.map(function(p,i){return '<button class="qch" data-i="'+i+'">'+p[0]+"</button>"}).join("");
+      Array.prototype.forEach.call(b.querySelectorAll(".qch"),function(c){c.onclick=function(){var p=LP[+c.dataset.i];
+        if(p[2]){$("#f-l").value=String(p[1]);$("#f-u").value=p[2]}else{$("#f-e").value="7"}
+        Array.prototype.forEach.call(b.querySelectorAll(".qch"),function(x){x.classList.toggle("on",x===c)})}});
+      $("#f-l").oninput=function(e){m.limit=e.target.value};$("#f-u").onchange=function(e){m.unit=e.target.value};
+      $("#f-e").oninput=function(e){m.expiry=e.target.value};$("#f-s").oninput=function(e){m.speed=e.target.value};$("#f-i").oninput=function(e){m.ip=e.target.value}}
+    else if(step===5){var lim=(m.limit?""+m.limit+" "+m.unit:"unlimited");b.innerHTML='<h3 style="margin:0 0 10px">Step 6 — Review</h3><table class="tbl"><tr><td style="color:var(--fnt);width:40%">Name</td><td class="mono">'+(esc(m.name)||"—")+"</td></tr><tr><td style='color:var(--fnt)'>Region</td><td class='mono'>"+esc(m.region)+"</td></tr><tr><td style='color:var(--fnt)'>Protocols</td><td class='mono'>"+esc(m.protocols.join(", "))+"</td></tr><tr><td style='color:var(--fnt)'>CPU / Memory</td><td class='mono'>"+m.cpu+" core / "+m.mem+" MB</td></tr><tr><td style='color:var(--fnt)'>Quota / Expiry</td><td class='mono'>"+esc(lim)+" · "+(m.expiry?esc(m.expiry)+" days":"never expires")+"</td></tr><tr><td style='color:var(--fnt)'>Speed / IP limit</td><td class='mono'>"+(m.speed?esc(m.speed)+" Mbps":"—")+" · "+(m.ip?esc(m.ip)+" IPs":"unlimited")+"</td></tr></table>"}
+    else if(step===6){b.innerHTML='<h3 style="margin:0 0 10px">Step 7 — Deploy</h3><div class="kv"><div class="it"><div class="k">Status</div><div class="v" id="ds">Deploying…</div></div><div class="it"><div class="k">Deployment</div><div class="v" id="di">—</div></div></div><div class="term" style="margin-top:14px"><div class="tbody" id="dl" style="height:220px"><div class="ll"><span class="t">»</span> queued</div></div></div>'}
   }
-  $("#bk").onclick=function(){if(step>0&&step!==5){step--;show()}};
+  $("#bk").onclick=function(){if(step>0&&step!==6){step--;show()}};
   $("#nx").onclick=function(){
     if(step===0){if(m.name.trim().length<2){toast("Give the instance a name (2+ chars)","err");return}step=1}
-    else if(step===4){step=5;show();$("#nx").disabled=true;
-      api("POST","/api/instances",{name:m.name,region:m.region,config:{protocol:m.protocols[0],protocols:m.protocols,cpu_limit:m.cpu,memory_mb:m.mem}})
+    else if(step===4){
+      var bad=null;
+      if(m.limit!==""&&(!isFinite(+m.limit)||+m.limit<=0))bad="quota must be a positive number — or empty for unlimited";
+      else if(m.expiry!==""&&(!isFinite(+m.expiry)||+m.expiry<=0))bad="expiry must be a positive number of days — or empty";
+      else if(m.speed!==""&&(!isFinite(+m.speed)||+m.speed<=0))bad="speed must be a positive number — or empty";
+      else if(m.ip!==""&&(!isFinite(+m.ip)||+m.ip<1||Math.floor(+m.ip)!==+m.ip))bad="IP limit must be a whole number ≥ 1 — or empty";
+      if(bad){toast(bad,"err");return}step=5}
+    else if(step===5){step=6;show();$("#nx").disabled=true;
+      api("POST","/api/instances",{name:m.name,region:m.region,config:{protocol:m.protocols[0],protocols:m.protocols,cpu_limit:m.cpu,memory_mb:m.mem,
+        limit:(m.limit===""?null:+m.limit),unit:m.unit,
+        expiry_days:(m.expiry===""?null:+m.expiry),
+        speed_mbps:(m.speed===""?null:+m.speed),
+        ip_limit:(m.ip===""?null:parseInt(m.ip,10))}})
       .then(function(created){return api("POST","/api/instances/"+created.id+"/deploy").then(function(d){return{c:created,d:d}})})
       .then(function(r){
         $("#di").textContent=r.d.deployment_id.slice(0,8);var seen=0;
@@ -380,9 +406,9 @@ function viewWizard(){
               else if(dep.status==="failed"){$("#ds").style.color="var(--red)";stopPoll();$("#nx").disabled=false;$("#nx").textContent="Retry";$("#nx").onclick=function(){viewInst(r.c.id)};toast("Deployment failed: "+(dep.error||"unknown"),"err",8000)}}
           }).catch(function(){});
         },1500);
-      }).catch(function(e){toast(e.message,"err",6000);step=4;show();$("#nx").disabled=false});
+      }).catch(function(e){toast(e.message,"err",6000);step=5;show();$("#nx").disabled=false});
       return}
-    else if(step<5)step+=1;
+    else if(step<6)step+=1;
     show();
   };
   show();
@@ -417,12 +443,67 @@ function viewInst(id){
         '<div class="row"><div class="mono grow" id="suburl" style="background:var(--bg2);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;word-break:break-all"></div><button class="btn sm pri" id="subc">Copy</button><a class="btn sm" id="subo" target="_blank" rel="noopener">Open</a></div>'+
         '<div class="row" style="margin-top:9px;gap:6px"><span class="ftx" style="font-size:11.5px">Formats:</span>'+
         '<button class="btn sm" id="sub-v2">v2ray/Clash Verge</button><button class="btn sm" id="sub-sb">sing-box</button><button class="btn sm" id="sub-cl">Clash Meta</button></div>'+
-        '<div class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between"><h3>Individual configs</h3><button class="btn sm" id="cf-r">Refresh</button></div><div id="cf-b" class="mut">Loading…</div></div>';
+        '<div class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between"><h3>Individual configs</h3><button class="btn sm" id="cf-r2">Refresh</button></div><div id="cf-b" class="mut">Loading…</div></div>'+
+        '<div class="card" style="margin-top:14px"><h3>Add config</h3>'+
+        '<p class="mut" style="font-size:12.5px;margin:6px 0 12px">A new config with its own quota, expiry, speed and IP limits — live immediately, no redeploy.</p>'+
+        '<div class="row" style="flex-wrap:wrap"><div class="fld" style="width:170px;margin:0"><label>Protocol</label><select class="inp" id="na-p">'+PROTOS.map(function(p){return '<option value="'+p[0]+'">'+p[1]+"</option>"}).join("")+'</select></div>'+
+        '<div class="fld grow" style="min-width:150px;margin:0"><label>Label (optional)</label><input class="inp" id="na-l" maxlength="80" placeholder="e.g. Friend iPhone"></div></div>'+
+        '<div class="row" style="flex-wrap:wrap;margin-top:10px"><div class="fld" style="width:130px;margin:0"><label>Quota</label><input class="inp" id="na-q" type="number" min="0" step="any" placeholder="unlimited"></div>'+
+        '<div class="fld" style="width:84px;margin:0"><label>Unit</label><select class="inp" id="na-u">'+["KB","MB","GB","TB"].map(function(u){return "<option"+(u==="GB"?" selected":"")+">"+u+"</option>"}).join("")+'</select></div>'+
+        '<div class="fld" style="width:120px;margin:0"><label>Days</label><input class="inp" id="na-e" type="number" min="0" step="any" placeholder="never"></div>'+
+        '<div class="fld" style="width:110px;margin:0"><label>Mbps</label><input class="inp" id="na-s" type="number" min="0" step="any" placeholder="unlimited"></div>'+
+        '<div class="fld" style="width:100px;margin:0"><label>IPs</label><input class="inp" id="na-i" type="number" min="0" step="1" placeholder="unlimited"></div>'+
+        '<div class="grow" style="align-self:flex-end"><button class="btn pri" id="na-ok">Create config</button></div></div></div>';
+      function numv(el){var v=$(el).value.trim();return v===""?null:parseFloat(v)}
+      $("#na-ok").onclick=function(){
+        var body={protocol:$("#na-p").value,label:$("#na-l").value,limit:numv("#na-q"),unit:$("#na-u").value,expiry_days:numv("#na-e"),speed_mbps:numv("#na-s"),ip_limit:numv("#na-i")};
+        api("POST","/api/instances/"+id+"/links",body).then(function(){toast("Config created","ok");loadCfg()}).catch(function(e){toast(e.message,"err")});
+      };
+      function linkRow(c,l,pubHost){
+        var st=l?l.status:"active";
+        var stMap={active:["Active","var(--grn)"],limited:["Limited","var(--amb)"],expired:["Expired","var(--red)"],disabled:["Disabled","var(--red)"]};
+        var stL=stMap[st]||[st,"var(--fnt)"];
+        var url=c&&c.share_url;
+        if(url){var m=url.match(/^(vless|trojan):\/\/([^@]+)@([^\/?#]+)([^#]*)/);
+          if(m){var proto=m[1],cred=m[2],inner=m[3],rest=m[4]||"";var innerHost=inner.split(":")[0];
+            if(innerHost==="127.0.0.1"||innerHost==="localhost"||innerHost==="0.0.0.0"){url=proto+"://"+cred+"@"+pubHost+rest}}}
+        var lim=l?l.limit_bytes:0,used=l?l.used_bytes:0,pct=l&&l.percent!=null?Math.min(100,l.percent):null;
+        var meter=(l?
+          (lim?'<div class="vmeter'+(l.exceeded?" crit":pct>80?" warn":"")+'" style="margin-top:8px"><div style="width:'+pct+'%"></div></div>'+
+            '<div class="row" style="justify-content:space-between;margin-top:5px"><span class="ftx" style="font-size:11.5px">'+fmtBytes(used)+" of "+fmtBytes(lim)+'</span><span class="mono ftx" style="font-size:11.5px">'+fmtBytes(l.remaining_bytes||0)+" left · "+pct.toFixed(1)+"%</span></div>"
+          :'<div class="row" style="justify-content:space-between;margin-top:8px"><span class="ftx" style="font-size:11.5px">'+fmtBytes(used)+" used</span>"+'<span class="chip">unlimited</span></div>'):"");
+        var kv='<div class="kv" style="margin-top:8px">';
+        if(l&&l.expires_at)kv+='<div class="it"><div class="k">Expires</div><div class="v mono">'+esc(String(l.expires_at).slice(0,16).replace("T"," "))+"</div></div>";
+        if(l&&l.speed_limit_bytes)kv+='<div class="it"><div class="k">Speed</div><div class="v">'+Math.round(l.speed_limit_bytes*8/1048576)+' Mbps</div></div>';
+        if(l&&l.ip_limit)kv+='<div class="it"><div class="k">IP limit</div><div class="v">'+l.ip_limit+"</div></div>";
+        kv+="</div>";
+        var uuid=l?l.uuid:(c?c.uuid:"");
+        return '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--bd)">'+
+          '<div class="row" style="justify-content:space-between"><div class="row" style="gap:8px"><b style="font-size:12.5px">'+esc((l&&l.label)||(c&&c.label)||"Config")+'</b><span class="chip">'+esc((l&&l.protocol)||(c&&c.protocol)||"")+'</span><span class="chip" style="color:'+stL[1]+';border-color:'+stL[1]+'">'+stL[0]+'</span></div>'+
+          '<div class="row" style="gap:5px"><button class="btn sm" data-edt="'+esc(uuid)+'">Edit</button><button class="btn sm" data-tgl="'+esc(uuid)+'">'+((l&&l.active===false)?"Enable":"Disable")+'</button><button class="btn sm" data-rst="'+esc(uuid)+'">Reset</button><button class="btn sm dng" data-del="'+esc(uuid)+'">Delete</button></div></div>'+
+          meter+kv+
+          (url?'<div class="mono" style="margin-top:7px;background:var(--bg2);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;word-break:break-all;max-height:90px;overflow:auto">'+esc(url)+"</div>"+
+          '<div class="row" style="margin-top:6px"><button class="btn sm pri" data-copy="'+esc(url)+'">Copy</button><button class="btn sm" data-qr="'+esc(url)+'">QR</button></div>'
+          :'<p class="ftx" style="font-size:11.5px;margin:6px 0 0">No client link while this config is '+stL[0].toLowerCase()+" — enable it or raise its quota.</p>")+
+          '<div id="ed-'+esc(uuid)+'" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--bd);border-radius:9px;padding:12px">'+
+          '<div class="row" style="flex-wrap:wrap"><div class="fld" style="width:130px;margin:0"><label>Quota</label><input class="inp ed-q" type="number" min="0" step="any" placeholder="unlimited" value="'+(lim?(+(lim/UNIT_BYTES(edUnit(l)))).toString().slice(0,8):"")+'"></div>'+
+          '<div class="fld" style="width:84px;margin:0"><label>Unit</label><select class="inp ed-u">'+["KB","MB","GB","TB"].map(function(u){return "<option"+(edUnit(l)===u?" selected":"")+">"+u+"</option>"}).join("")+'</select></div>'+
+          '<div class="fld" style="width:120px;margin:0"><label>Days</label><input class="inp ed-e" type="number" min="0" step="any" placeholder="never" value="'+edDays(l)+'"></div>'+
+          '<div class="fld" style="width:110px;margin:0"><label>Mbps</label><input class="inp ed-s" type="number" min="0" step="any" placeholder="unlimited" value="'+((l&&l.speed_limit_bytes)?Math.round(l.speed_limit_bytes*8/1048576):"")+'"></div>'+
+          '<div class="fld" style="width:100px;margin:0"><label>IPs</label><input class="inp ed-i" type="number" min="0" step="1" placeholder="unlimited" value="'+((l&&l.ip_limit)||"")+'"></div>'+
+          '<div class="grow" style="align-self:flex-end;display:flex;gap:6px"><button class="btn sm pri" data-save="'+esc(uuid)+'">Save</button><button class="btn sm" data-cxl="'+esc(uuid)+'">Cancel</button></div></div>'+
+          '<p class="fn" style="margin-top:8px">Empty means unlimited. Saving propagates to the Core immediately — no redeploy.</p></div></div>';
+      }
+      function UNIT_BYTES(u){return {KB:1024,MB:1048576,GB:1073741824,TB:1099511627776}[u]||1073741824}
+      function edUnit(l){if(!l||!l.limit_bytes)return "GB";var n=l.limit_bytes;if(n>=1073741824)return "GB";if(n>=1048576)return "MB";return "KB"}
+      function edDays(l){if(!l||!l.expires_at)return "";var s=l.seconds_remaining;return s==null?"":+(s/86400).toFixed(3)}
       function loadCfg(){
         // tell the server the public host we're browsing on (edge hides it)
         api("POST","/api/instances/"+id+"/announce-host",{host:location.host}).catch(function(){});
         $("#cf-b").innerHTML='<span class="mut">Loading…</span>';
-        api("GET","/api/instances/"+id+"/config").then(function(d){
+        Promise.all([api("GET","/api/instances/"+id+"/config"),api("GET","/api/instances/"+id+"/links").catch(function(){return{links:[],live:false}})])
+        .then(function(rs){
+          var d=rs[0],links=rs[1]&&rs[1].links?rs[1].links:[];
           var subUrl=location.origin+"/i/"+(d.endpoint_path||"").replace("/i/","")+"/sub";
           if(d.endpoint_path){$("#suburl").textContent=subUrl;
             $("#subc").onclick=function(){navigator.clipboard&&navigator.clipboard.writeText(subUrl).then(function(){toast("Subscription URL copied","ok",2500)})};
@@ -431,25 +512,16 @@ function viewInst(id){
             $("#sub-v2").onclick=function(){navigator.clipboard&&navigator.clipboard.writeText(v2).then(function(){toast("v2ray sub URL copied","ok",2500)})};
             $("#sub-sb").onclick=function(){navigator.clipboard&&navigator.clipboard.writeText(v2+"&fmt=singbox").then(function(){toast("sing-box sub URL copied","ok",2500)})};
             $("#sub-cl").onclick=function(){navigator.clipboard&&navigator.clipboard.writeText(v2+"&fmt=clash").then(function(){toast("Clash sub URL copied","ok",2500)})};}
-          if(!d.configs||!d.configs.length){
+          var pubHost=location.host;
+          var byUuid={};(d.configs||[]).forEach(function(c){if(c.uuid)byUuid[c.uuid]=c});
+          var rows=[];var seen={};
+          links.forEach(function(l){seen[l.uuid]=1;rows.push(linkRow(byUuid[l.uuid]||null,l,pubHost))});
+          (d.configs||[]).forEach(function(c){if(!seen[c.uuid])rows.push(linkRow(c,null,pubHost))});
+          if(!rows.length){
             $("#cf-b").innerHTML='<span class="ftx">'+esc(d.error||"No configs yet — if the instance shows Running, press Redeploy once (instances created before this fix get their links on redeploy).")+"</span>";
             return;
           }
-          var pubHost=location.host;
-          $("#cf-b").innerHTML=d.configs.map(function(c,idx){
-            var url=c.share_url;
-            var m=c.share_url.match(/^(vless|trojan):\/\/([^@]+)@([^\/?#]+)([^#]*)/);
-            if(m){
-              var proto=m[1],cred=m[2],inner=m[3],rest=m[4]||"";
-              var innerHost=inner.split(":")[0];
-              if(innerHost==="127.0.0.1"||innerHost==="localhost"||innerHost==="0.0.0.0"){
-                url=proto+"://"+cred+"@"+pubHost+rest;
-              }
-            }
-            return '<div style="margin-top:12px"><div class="row" style="justify-content:space-between"><b style="font-size:12.5px">'+esc(c.label)+'</b><span class="chip">'+esc(c.protocol)+"</span></div>"+
-              '<div class="mono" style="margin-top:5px;background:var(--bg2);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;word-break:break-all;max-height:90px;overflow:auto">'+esc(url)+"</div>"+
-              '<div class="row" style="margin-top:6px"><button class="btn sm pri" data-copy="'+esc(url)+'">Copy</button><button class="btn sm" data-qr="'+esc(url)+'">QR</button></div></div>';
-          }).join("");
+          $("#cf-b").innerHTML='<p class="ftx" style="font-size:11.5px;margin:0 0 2px">'+(rs[1]&&rs[1].live?"Live usage from the Core":"Cached — Core unreachable")+"</p>"+rows.join("");
           Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-copy]"),function(btn){
             btn.onclick=function(){navigator.clipboard&&navigator.clipboard.writeText(btn.dataset.copy).then(function(){toast("Copied — v2rayNG: Import from clipboard","ok",4000)})}});
           Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-qr]"),function(btn){
@@ -462,9 +534,43 @@ function viewInst(id){
               api("POST","/api/instances/"+id+"/qr",{text:btn.dataset.qr}).then(function(svg){
                 $(".qrbox",ov).innerHTML=svg}).catch(function(e){ov.remove();toast(e.message,"err")});
             }});
+          Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-edt]"),function(btn){
+            btn.onclick=function(){var ed=$("#ed-"+btn.dataset.edt);if(ed)ed.style.display=ed.style.display==="none"?"block":"none"}});
+          Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-cxl]"),function(btn){
+            btn.onclick=function(){var ed=$("#ed-"+btn.dataset.cxl);if(ed)ed.style.display="none"}});
+          Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-save]"),function(btn){
+            btn.onclick=function(){
+              var ed=$("#ed-"+btn.dataset.save);if(!ed)return;
+              function v(sel){var x=ed.querySelector(sel);var s=x?x.value.trim():"";return s===""?null:parseFloat(s)}
+              var u=ed.querySelector(".ed-u").value;
+              var body={limit:v(".ed-q"),unit:u,expiry_days:v(".ed-e"),speed_mbps:v(".ed-s"),ip_limit:v(".ed-i")};
+              api("PATCH","/api/instances/"+id+"/links/"+btn.dataset.save,body)
+                .then(function(l){toast("Saved — quota "+(l.limit_bytes?fmtBytes(l.limit_bytes):"unlimited"),"ok");loadCfg()})
+                .catch(function(e){toast(e.message,"err")});
+            }});
+          Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-tgl]"),function(btn){
+            btn.onclick=function(){
+              var want=btn.textContent.trim().toLowerCase()==="enable";
+              api("PATCH","/api/instances/"+id+"/links/"+btn.dataset.tgl,{active:want})
+                .then(function(){toast(want?"Config enabled":"Config disabled","ok");loadCfg()})
+                .catch(function(e){toast(e.message,"err")});
+            }});
+          Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-rst]"),function(btn){
+            btn.onclick=function(){
+              api("POST","/api/instances/"+id+"/links/"+btn.dataset.rst+"/reset")
+                .then(function(){toast("Usage counter reset","ok");loadCfg()})
+                .catch(function(e){toast(e.message,"err")});
+            }});
+          Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-del]"),function(btn){
+            btn.onclick=function(){
+              if(!confirm("Delete this config? Clients using it stop working immediately."))return;
+              api("DELETE","/api/instances/"+id+"/links/"+btn.dataset.del)
+                .then(function(){toast("Config deleted","ok");loadCfg()})
+                .catch(function(e){toast(e.message,"err")});
+            }});
         }).catch(function(e){$("#cf-b").innerHTML='<span class="ftx">'+esc(e.message)+"</span>"});
       }
-      $("#cf-r").onclick=loadCfg;loadCfg();
+      $("#cf-r").onclick=loadCfg;var cf2=$("#cf-r2");if(cf2)cf2.onclick=loadCfg;loadCfg();
     }
     else if(tab==="volume"){
       b.innerHTML='<div class="card" style="max-width:620px"><div class="row" style="justify-content:space-between"><h3>'+ic("vol")+' Volume & time</h3><button class="btn sm" id="vrf">Refresh</button></div>'+
