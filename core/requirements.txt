@@ -1,0 +1,2 @@
+# EMUNEL Core Dependencies
+cryptography>=42.0
