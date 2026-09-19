@@ -194,4 +194,11 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "0008_instance_volume_time",
+        """
+        ALTER TABLE instance_volume ADD COLUMN IF NOT EXISTS time_limit_days DOUBLE PRECISION;
+        ALTER TABLE instance_volume ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+        """,
+    ),
 ]

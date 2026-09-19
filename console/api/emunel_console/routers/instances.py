@@ -65,7 +65,9 @@ async def list_instances(request: Request, user: asyncpg.Record = Depends(curren
                 ORDER BY (CASE WHEN d.kind = 'path' THEN 0 ELSE 1 END), d.created_at DESC LIMIT 1) AS domain_kind,
                (SELECT COUNT(*) FROM deployments dep WHERE dep.instance_id = i.id) AS deployments_count,
                (SELECT iv.limit_bytes FROM instance_volume iv
-                WHERE iv.instance_id = i.id) AS volume_limit_bytes
+                WHERE iv.instance_id = i.id) AS volume_limit_bytes,
+               (SELECT iv.expires_at FROM instance_volume iv
+                WHERE iv.instance_id = i.id) AS volume_expires_at
         FROM instances i
         WHERE i.user_id = $1 AND i.status <> 'deleted'
         ORDER BY i.created_at DESC
@@ -76,6 +78,8 @@ async def list_instances(request: Request, user: asyncpg.Record = Depends(curren
     out = []
     for r in rows:
         item = _instance_out(r)
+        if item.get("volume_expires_at") is not None:
+            item["volume_expires_at"] = item["volume_expires_at"].isoformat()
         if item.get("domain"):
             item["endpoint_url"] = (
                 f"{origin}/i/{item['domain']}" if item.get("domain_kind") == "path"
@@ -125,7 +129,8 @@ async def get_instance(instance_id: str, request: Request,
         out["endpoint_url"] = path_dom["url"]
         out["endpoint_path"] = f"/i/{path_dom['domain']}"
     vol = await pool.fetchrow(
-        "SELECT limit_bytes FROM instance_volume WHERE instance_id = $1", instance_id)
+        "SELECT limit_bytes, time_limit_days, expires_at FROM instance_volume "
+        "WHERE instance_id = $1", instance_id)
     out.update({
         "config": {
             "protocol": cfg["protocol"],
@@ -139,6 +144,10 @@ async def get_instance(instance_id: str, request: Request,
         "volume": {
             "limit_bytes": (int(vol["limit_bytes"]) if vol and vol["limit_bytes"] else None),
             "unlimited": not (vol and vol["limit_bytes"]),
+            "time_limit_days": (float(vol["time_limit_days"])
+                                if vol and vol["time_limit_days"] is not None else None),
+            "expires_at": (vol["expires_at"].isoformat()
+                            if vol and vol["expires_at"] is not None else None),
         },
     })
     return out
@@ -278,6 +287,14 @@ async def deploy(instance_id: str, request: Request,
                    f"{volume_svc._fmt(info['limit_bytes'])}) — raise or clear the limit "
                    "on the Volume tab to deploy again",
         )
+    expired, tinfo = await volume_svc.time_reached(pool, instance_id)
+    if expired:
+        raise HTTPException(
+            status_code=409,
+            detail="time limit reached (expired on "
+                   f"{tinfo['expires_at'][:16].replace('T', ' ')}) — "
+                   "clear or extend it on the Volume tab to deploy again",
+        )
     try:
         deployment_id = await deploy_svc.deploy_instance(pool, instance_id)
     except ValueError as exc:
@@ -322,6 +339,13 @@ async def redeploy(instance_id: str, request: Request,
             status_code=409,
             detail=f"volume limit reached ({volume_svc._fmt(info['used_bytes'])} of "
                    f"{volume_svc._fmt(info['limit_bytes'])}) — raise or clear the limit "
+                   "on the Volume tab to deploy again",
+        )
+    expired, tinfo = await volume_svc.time_reached(pool, instance_id)
+    if expired:
+        raise HTTPException(
+            status_code=409,
+            detail="time limit reached (expired) — clear or extend it "
                    "on the Volume tab to deploy again",
         )
     try:
@@ -501,17 +525,30 @@ async def get_volume(instance_id: str, request: Request,
 @router.put("/instances/{instance_id}/volume")
 async def put_volume(instance_id: str, request: Request,
                      user: asyncpg.Record = Depends(current_user)):
-    """Set or clear the instance's data cap. An empty/absent value means the
-    Default — unlimited. Accepts {limit_gb} (fractional) or {limit_bytes}."""
+    """Set or clear the instance's caps. Empty/absent values mean the
+    Default — unlimited. Accepts {limit_gb}/{limit_bytes} for volume and
+    {time_limit_days} for the time limit. Each key is applied independently:
+    send only the volume keys to leave the time limit untouched, only
+    time_limit_days to leave the volume untouched ({} still clears the
+    volume cap — the pre-existing behavior)."""
     pool = get_pool(request)
     inst = await owned_instance(pool, user["id"], instance_id)
     body = await request.json()
+    if not isinstance(body, dict):
+        body = {}
     try:
-        limit = volume_svc.parse_limit(body if isinstance(body, dict) else {})
+        limit = volume_svc.parse_limit(body)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     await volume_svc.set_limit(pool, instance_id, limit,
                                user_id=user["id"], name=inst["name"])
+    if "time_limit_days" in body or "expires_at" in body:
+        try:
+            days, expires_at = volume_svc.parse_time_limit(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        await volume_svc.set_time_limit(pool, instance_id, days, expires_at,
+                                        user_id=user["id"], name=inst["name"])
     return await volume_svc.get_state(pool, instance_id)
 
 

@@ -176,10 +176,10 @@ button,.head,.import-head,.qr-plate,.user-area,.badge,.num,.os-title,.label{-web
     <div class="header-sub">Enterprise Access</div>
    </div>
    <div class="header-right">
-    <div class="user-area s-active">
+    <div class="user-area @@STATUS_CLASS@@">
      <span class="dot-status"></span>
      <span class="uname">@@TITLE@@</span>
-     <span class="st">Active</span>
+     <span class="st">@@STATUS_LABEL@@</span>
     </div>
     <button type="button" class="theme-toggle" id="themeToggle" title="Switch theme" aria-label="Switch theme">
      <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.4v2.2M12 19.4v2.2M4.2 12H2M22 12h-2.2M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>
@@ -190,16 +190,8 @@ button,.head,.import-head,.qr-plate,.user-area,.badge,.num,.os-title,.label{-web
 
 
   <div class="stats-grid">
-   <div class="stat-card tz">
-    <div class="label"><span>Remaining</span><span class="pct">∞</span></div>
-    <div class="bar"><div class="fill" style="width:100%;background:var(--blue)"></div></div>
-    <div class="values"><b>∞</b><span>Not reported / ∞</span></div>
-   </div>
-   <div class="stat-card tz">
-    <div class="label"><span>Time</span><span class="pct">∞</span></div>
-    <div class="bar"><div class="fill" style="width:100%;background:var(--blue)"></div></div>
-    <div class="values"><b style="color:var(--blue)">Unlimited</b><span>—</span></div>
-   </div>
+   @@VOLUME_CARD@@
+   @@TIME_CARD@@
   </div>
 
   <div class="subscription-section tz">

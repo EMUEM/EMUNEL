@@ -398,9 +398,35 @@ CREATE TABLE IF NOT EXISTS instance_volume (
     baseline_bytes INTEGER NOT NULL DEFAULT 0,
     used_cache INTEGER NOT NULL DEFAULT 0,
     used_at TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    time_limit_days REAL,
+    expires_at TEXT
 );
 """
+
+# Columns added to instance_volume after the first release. CREATE TABLE IF
+# NOT EXISTS does not extend tables that already exist, so the console applies
+# these idempotently on every SQLite boot (old databases keep working).
+SQLITE_PATCHES = (
+    ("instance_volume", "time_limit_days", "REAL"),
+    ("instance_volume", "expires_at", "TEXT"),
+)
+
+
+async def _sqlite_patch_schema(sqlite_db: "_SqliteDatabase") -> None:
+    """Add columns introduced after a database was first created."""
+    conn = sqlite_db._conn
+    for table, column, col_type in SQLITE_PATCHES:
+        try:
+            cur = await conn.execute(f"PRAGMA table_info({table})")
+            cols = {row[1] for row in await cur.fetchall()}
+            if column not in cols:
+                await conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                await conn.commit()
+                log.info("sqlite schema patch: %s.%s added", table, column)
+        except Exception as exc:  # table missing / patch must never block boot
+            log.warning("sqlite schema patch %s.%s skipped: %s", table, column, exc)
 
 POSTGRES_MIGRATIONS = None  # imported lazily below to reuse the SQL list
 
@@ -416,6 +442,7 @@ async def init_pool() -> None:
         _sqlite = _SqliteDatabase(dsn)
         await _sqlite.connect()
         await _sqlite.conn_executescript(SQLITE_SCHEMA)
+        await _sqlite_patch_schema(_sqlite)
         db = _sqlite
         await _seed_default_admin()
         log.info("EMUNEL Console database: embedded SQLite (%s)", _mask_sqlite(dsn))
@@ -441,6 +468,7 @@ async def init_pool() -> None:
         _sqlite = _SqliteDatabase(sqlite_dsn)
         await _sqlite.connect()
         await _sqlite.conn_executescript(SQLITE_SCHEMA)
+        await _sqlite_patch_schema(_sqlite)
         db = _sqlite
         await _seed_default_admin()
         log.warning(

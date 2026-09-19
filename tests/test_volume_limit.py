@@ -191,5 +191,222 @@ class GateAndEnforcementTests(VolumeBase):
             await volume.enforce_all(self.db)
 
 
+class ParseTimeLimitTests(unittest.TestCase):
+    def test_empty_means_unlimited(self):
+        self.assertEqual(volume.parse_time_limit({}), (None, None))
+        self.assertEqual(volume.parse_time_limit({"time_limit_days": None}), (None, None))
+        self.assertEqual(volume.parse_time_limit({"time_limit_days": ""}), (None, None))
+        self.assertEqual(volume.parse_time_limit({"time_limit_days": "  "}), (None, None))
+        self.assertEqual(volume.parse_time_limit({"time_limit_days": 0}), (None, None))
+
+    def test_days_produce_future_expiry(self):
+        from datetime import datetime, timezone
+        before = datetime.now(timezone.utc)
+        days, expires_at = volume.parse_time_limit({"time_limit_days": 30})
+        after = datetime.now(timezone.utc)
+        self.assertEqual(days, 30.0)
+        target = before.timestamp() + 30 * 86400
+        self.assertTrue(before.timestamp() <= expires_at.timestamp() <= after.timestamp() + 30 * 86400)
+        self.assertAlmostEqual(expires_at.timestamp(), target, delta=5)
+        # fractional days are accepted (e.g. half a day)
+        days, _ = volume.parse_time_limit({"time_limit_days": 0.5})
+        self.assertEqual(days, 0.5)
+
+    def test_bounds(self):
+        with self.assertRaises(ValueError):
+            volume.parse_time_limit({"time_limit_days": -1})
+        with self.assertRaises(ValueError):
+            volume.parse_time_limit({"time_limit_days": "abc"})
+        with self.assertRaises(ValueError):   # below one minute
+            volume.parse_time_limit({"time_limit_days": 1 / 86400 / 2})
+        with self.assertRaises(ValueError):   # above ten years
+            volume.parse_time_limit({"time_limit_days": 4000})
+
+
+class TimeLimitStateTests(VolumeBase):
+    async def test_default_state_has_no_time_limit(self):
+        with self.core_total(0):
+            state = await volume.get_state(self.db, INSTANCE)
+        self.assertIsNone(state["time_limit_days"])
+        self.assertIsNone(state["expires_at"])
+        self.assertFalse(state["expired"])
+        self.assertIsNone(state["seconds_remaining"])
+
+    async def test_set_and_clear_time_limit(self):
+        from datetime import datetime, timedelta, timezone
+        days, expires_at = volume.parse_time_limit({"time_limit_days": 30})
+        await volume.set_time_limit(self.db, INSTANCE, days, expires_at)
+        state = await volume.get_state(self.db, INSTANCE)
+        self.assertEqual(state["time_limit_days"], 30.0)
+        self.assertFalse(state["expired"])
+        self.assertGreater(state["seconds_remaining"], 29 * 86400)
+        self.assertLessEqual(state["seconds_remaining"], 30 * 86400)
+        # volume is untouched — the two limits are independent
+        self.assertTrue(state["unlimited"])
+        # clear → back to default/unlimited
+        await volume.set_time_limit(self.db, INSTANCE, None, None)
+        state = await volume.get_state(self.db, INSTANCE)
+        self.assertIsNone(state["expires_at"])
+        self.assertFalse(state["expired"])
+
+    async def test_volume_and_time_coexist(self):
+        await volume.set_limit(self.db, INSTANCE, 50 * GB)
+        days, expires_at = volume.parse_time_limit({"time_limit_days": 7})
+        await volume.set_time_limit(self.db, INSTANCE, days, expires_at)
+        with self.core_total(5 * GB):
+            state = await volume.get_state(self.db, INSTANCE)
+        self.assertEqual(state["limit_bytes"], 50 * GB)
+        self.assertEqual(state["used_bytes"], 5 * GB)
+        self.assertEqual(state["time_limit_days"], 7.0)
+        self.assertFalse(state["expired"])
+
+    async def test_expired_detected(self):
+        from datetime import datetime, timedelta, timezone
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        await volume.set_time_limit(self.db, INSTANCE, 1, past)
+        state = await volume.get_state(self.db, INSTANCE)
+        self.assertTrue(state["expired"])
+        self.assertEqual(state["seconds_remaining"], 0)
+        reached, info = await volume.time_reached(self.db, INSTANCE)
+        self.assertTrue(reached)
+        self.assertTrue(info["expires_at"].startswith(past.strftime("%Y-%m-%dT%H")))
+
+    async def test_not_yet_expired_does_not_gate(self):
+        from datetime import datetime, timezone
+        days, expires_at = volume.parse_time_limit({"time_limit_days": 30})
+        await volume.set_time_limit(self.db, INSTANCE, days, expires_at)
+        reached, info = await volume.time_reached(self.db, INSTANCE)
+        self.assertFalse(reached)
+        self.assertIsNone(info)
+
+
+class TimeEnforcementTests(VolumeBase):
+    async def test_expired_running_instance_is_stopped(self):
+        from datetime import datetime, timedelta, timezone
+        await self.db.execute(
+            "UPDATE instances SET status='running' WHERE id=$1", INSTANCE)
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await volume.set_time_limit(self.db, INSTANCE, 30, past)
+        stopped = AsyncMock()
+        with patch.object(volume.deploy_svc, "stop_instance", stopped):
+            await volume.enforce_all(self.db)
+        stopped.assert_called_once()
+        rows = await self.db.fetch(
+            "SELECT message FROM activity_events WHERE instance_id = $1", INSTANCE)
+        self.assertTrue(any("time limit reached" in r["message"] for r in rows))
+
+    async def test_unexpired_instance_keeps_running(self):
+        days, expires_at = volume.parse_time_limit({"time_limit_days": 30})
+        await volume.set_time_limit(self.db, INSTANCE, days, expires_at)
+        await self.db.execute(
+            "UPDATE instances SET status='running' WHERE id=$1", INSTANCE)
+        stopped = AsyncMock()
+        with patch.object(volume.deploy_svc, "stop_instance", stopped):
+            await volume.enforce_all(self.db)
+        stopped.assert_not_called()
+
+    async def test_time_pass_does_not_break_volume_pass(self):
+        # both limits set: volume over, time fine → stopped by the volume rule
+        await self.db.execute(
+            "UPDATE instances SET status='running' WHERE id=$1", INSTANCE)
+        await volume.set_limit(self.db, INSTANCE, 5 * GB)
+        days, expires_at = volume.parse_time_limit({"time_limit_days": 30})
+        await volume.set_time_limit(self.db, INSTANCE, days, expires_at)
+        stopped = AsyncMock()
+        with patch.object(volume.deploy_svc, "stop_instance", stopped), \
+             self.core_total(6 * GB):
+            await volume.enforce_all(self.db)
+        stopped.assert_called_once()
+        rows = await self.db.fetch(
+            "SELECT message FROM activity_events WHERE instance_id = $1", INSTANCE)
+        self.assertTrue(any("volume limit reached" in r["message"] for r in rows))
+
+
+class UserinfoHeaderTests(unittest.TestCase):
+    def test_no_state_is_the_legacy_default(self):
+        self.assertEqual(volume.userinfo_header(None),
+                         "upload=0; download=0; total=0; expire=0")
+
+    def test_unlimited_state_reports_usage_only(self):
+        self.assertEqual(
+            volume.userinfo_header({"used_bytes": 1234, "limit_bytes": None,
+                                    "expires_at": None}),
+            "upload=0; download=1234; total=0; expire=0")
+
+    def test_limits_map_to_total_and_expire(self):
+        from datetime import datetime, timezone
+        expires_at = datetime.now(timezone.utc)
+        header = volume.userinfo_header(
+            {"used_bytes": 2 * GB, "limit_bytes": 10 * GB,
+             "expires_at": expires_at.isoformat()})
+        want_expire = int(expires_at.timestamp())
+        self.assertEqual(
+            header, f"upload=0; download={2 * GB}; total={10 * GB}; expire={want_expire}")
+
+    def test_corrupt_expiry_falls_back_to_unlimited(self):
+        header = volume.userinfo_header(
+            {"used_bytes": 0, "limit_bytes": None, "expires_at": "not-a-date"})
+        self.assertIn("expire=0", header)
+
+
+class SubscriptionPageTests(unittest.TestCase):
+    """The subscription page must show the instance's REAL limits."""
+
+    @staticmethod
+    def _render(quota=None):
+        from emunel_console.services.subscription import render_subscription
+        return render_subscription(
+            "EMUNEL \u00b7 test", [], "example.com", "/i/tok/sub",
+            qr_path="/i/tok/api/qr", quota=quota)
+
+    def test_no_quota_keeps_legacy_look(self):
+        page = self._render()
+        self.assertIn("Not reported / ∞", page)
+        self.assertIn("Unlimited", page)
+        self.assertIn("s-active", page)
+        self.assertIn(">Active<", page)
+
+    def test_volume_and_time_rendered(self):
+        from datetime import datetime, timedelta, timezone
+        expires_at = datetime.now(timezone.utc) + timedelta(days=29)
+        quota = {
+            "limit_bytes": 50 * GB, "used_bytes": 10 * GB,
+            "remaining_bytes": 40 * GB, "percent": 20.0, "exceeded": False,
+            "time_limit_days": 30, "expires_at": expires_at.isoformat(),
+            "seconds_remaining": 29 * 86400, "expired": False,
+        }
+        page = self._render(quota)
+        self.assertIn("10.00 GB", page)          # usage
+        self.assertIn("of 50.00 GB", page)       # the real cap
+        self.assertIn("40.00 GB", page)          # remaining
+        self.assertIn("until", page)
+        self.assertIn("29d", page)               # time remaining
+        self.assertNotIn("Not reported", page)
+        self.assertNotIn(">Unlimited<", page)    # hmm — time card no longer unlimited
+        self.assertIn("s-active", page)
+
+    def test_expired_and_exceeded_status(self):
+        from datetime import datetime, timedelta, timezone
+        past = datetime.now(timezone.utc) - timedelta(days=1)
+        quota = {
+            "limit_bytes": None, "used_bytes": 0, "exceeded": False,
+            "time_limit_days": 30, "expires_at": past.isoformat(),
+            "seconds_remaining": 0, "expired": True,
+        }
+        page = self._render(quota)
+        self.assertIn("s-expired", page)
+        self.assertIn(">Expired<", page)
+        # exceeded (but still within the time window) → Limited
+        future = datetime.now(timezone.utc) + timedelta(days=5)
+        quota = {
+            "limit_bytes": 1024, "used_bytes": 4096, "exceeded": True,
+            "time_limit_days": 30, "expires_at": future.isoformat(),
+            "seconds_remaining": 5 * 86400, "expired": False,
+        }
+        page = self._render(quota)
+        self.assertIn("s-limited", page)
+        self.assertIn(">Limited<", page)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,17 +1,23 @@
-"""Per-instance volume (data) limits — console-side accounting only.
+"""Per-instance volume (data) and time limits — console-side accounting only.
 
 The EMUNEL Core already counts its lifetime transferred bytes
 (RuntimeStats.total_bytes) and persists them across restarts in the
-instance state file. This module layers an optional operator-set cap on
+instance state file. This module layers optional operator-set caps on
 top of that counter WITHOUT touching the Core:
 
-* the limit lives in the Console database (``instance_volume`` table);
+* the limits live in the Console database (``instance_volume`` table);
   no limit / empty value  →  Default, treated as Unlimited
 * ``used = core_lifetime_bytes - baseline`` — the baseline lets the
   operator reset the usage counter for a new billing period
 * the last known usage is cached so stopped instances still show it
-* when usage reaches the limit the Console stops the instance through
-  the normal lifecycle service (exactly what the Stop button does)
+* when usage reaches the limit — or the time limit passes — the Console
+  stops the instance through the normal lifecycle service (exactly what
+  the Stop button does)
+
+The real limits are also surfaced to subscribers: ``userinfo_header``()
+builds the standard ``subscription-userinfo`` value proxy clients parse
+(total / expire / download), so the panel, the subscription page and the
+user's client all read the same numbers.
 
 Enforcement is deliberately conservative: it only ever acts on instances
 that (a) have a limit set and (b) are currently running, and every step
@@ -21,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
@@ -34,10 +40,17 @@ log = get("runtime", "emunel.console.volume")
 
 MIN_LIMIT_BYTES = 1024 * 1024          # 1 MB
 MAX_LIMIT_BYTES = 1024 ** 5           # 1 PB
+MIN_TIME_LIMIT_DAYS = 1 / 1440        # one minute
+MAX_TIME_LIMIT_DAYS = 3650             # ten years
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _aware(value: datetime) -> datetime:
+    """PG TIMESTAMPTZ is aware; defensive guard for naive values."""
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def parse_limit(body: dict) -> int | None:
@@ -77,10 +90,33 @@ def parse_limit(body: dict) -> int | None:
     return limit
 
 
+def parse_time_limit(body: dict) -> tuple[float | None, datetime | None]:
+    """Accept {time_limit_days} (fractional days). Empty/None/0 means the
+    Default — unlimited. Returns (days, expires_at); (None, None) clears it."""
+    raw = body.get("time_limit_days", None)
+    if isinstance(raw, str) and not raw.strip():
+        raw = None
+    if raw is None:
+        return None, None
+    try:
+        days = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError("time_limit_days must be a number")
+    if days < 0:
+        raise ValueError("time_limit_days cannot be negative — leave it empty for unlimited")
+    if days == 0:
+        return None, None
+    if days < MIN_TIME_LIMIT_DAYS:
+        raise ValueError("time limit is below the one-minute minimum")
+    if days > MAX_TIME_LIMIT_DAYS:
+        raise ValueError("time limit is above the ten-year maximum")
+    return days, _utcnow() + timedelta(days=days)
+
+
 async def _row(pool, instance_id: str):
     return await pool.fetchrow(
-        "SELECT instance_id, limit_bytes, baseline_bytes, used_cache, used_at "
-        "FROM instance_volume WHERE instance_id = $1",
+        "SELECT instance_id, limit_bytes, baseline_bytes, used_cache, used_at, "
+        "time_limit_days, expires_at FROM instance_volume WHERE instance_id = $1",
         instance_id,
     )
 
@@ -108,12 +144,15 @@ async def _live_total(pool, instance_id: str) -> int | None:
 
 
 async def get_state(pool, instance_id: str) -> dict:
-    """Current volume state for an instance. Live usage when the Core is
-    reachable, the cached value otherwise."""
+    """Current volume/time state for an instance. Live usage when the Core
+    is reachable, the cached value otherwise."""
     row = await _row(pool, instance_id)
     limit = int(row["limit_bytes"]) if row and row["limit_bytes"] else None
     baseline = int(row["baseline_bytes"]) if row and row["baseline_bytes"] else 0
     cached = int(row["used_cache"]) if row and row["used_cache"] is not None else 0
+    time_days = (float(row["time_limit_days"])
+                 if row and row["time_limit_days"] is not None else None)
+    expires_at = (row["expires_at"] if row and row["expires_at"] is not None else None)
 
     total = await _live_total(pool, instance_id)
     live = total is not None
@@ -126,6 +165,14 @@ async def get_state(pool, instance_id: str) -> dict:
     else:
         used = cached
 
+    expired = False
+    seconds_remaining = None
+    if expires_at is not None:
+        expires_dt = _aware(expires_at)
+        expires_at = expires_dt
+        seconds_remaining = max(0.0, (expires_dt - _utcnow()).total_seconds())
+        expired = seconds_remaining <= 0
+
     out = {
         "instance_id": instance_id,
         "limit_bytes": limit,
@@ -134,6 +181,10 @@ async def get_state(pool, instance_id: str) -> dict:
         "live": live,
         "baseline_bytes": baseline,
         "used_at": (row["used_at"].isoformat() if row and row["used_at"] is not None else None),
+        "time_limit_days": time_days,
+        "expires_at": (expires_at.isoformat() if expires_at is not None else None),
+        "expired": expired,
+        "seconds_remaining": seconds_remaining,
     }
     if limit:
         out["remaining_bytes"] = max(0, limit - used)
@@ -164,6 +215,31 @@ async def set_limit(pool, instance_id: str, limit: int | None,
         await _activity(pool, user_id, instance_id,
                         "Volume limit set to unlimited (default)"
                         if limit is None else f"Volume limit for '{name}' set to {_fmt(limit)}")
+
+
+async def set_time_limit(pool, instance_id: str, days: float | None,
+                         expires_at: datetime | None, *,
+                         user_id: str | None = None, name: str = "") -> None:
+    """Upsert the time cap. expires_at=None clears it (Default / unlimited).
+    Volume columns are never touched — the two limits are independent."""
+    now = _utcnow()
+    await pool.execute(
+        """
+        INSERT INTO instance_volume (instance_id, time_limit_days, expires_at,
+                                     updated_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (instance_id) DO UPDATE SET
+            time_limit_days = $2, expires_at = $3, updated_at = $4
+        """,
+        instance_id, days, expires_at, now,
+    )
+    if user_id:
+        if expires_at is None:
+            message = "Time limit set to unlimited (default)"
+        else:
+            message = (f"Time limit for '{name}' set to {_fmt_days(days)} — "
+                       f"expires {_fmt_when(expires_at)}")
+        await _activity(pool, user_id, instance_id, message)
 
 
 async def reset_usage(pool, instance_id: str, *, user_id: str | None = None,
@@ -205,16 +281,30 @@ async def limit_reached(pool, instance_id: str) -> tuple[bool, dict | None]:
     return True, {"limit_bytes": limit, "used_bytes": used}
 
 
+async def time_reached(pool, instance_id: str) -> tuple[bool, dict | None]:
+    """Fast check used to gate deploys: has the time limit passed?"""
+    row = await _row(pool, instance_id)
+    if row is None or row["expires_at"] is None:
+        return False, None
+    expires_at = _aware(row["expires_at"])
+    if expires_at > _utcnow():
+        return False, None
+    return True, {"expires_at": expires_at.isoformat()}
+
+
 async def enforce_all(pool) -> None:
-    """Stop every running instance that has reached its cap. Never raises."""
+    """Stop every running instance that has reached its volume or time cap.
+    Never raises."""
     try:
         rows = await pool.fetch(
             """
             SELECT iv.instance_id, iv.limit_bytes, iv.baseline_bytes,
-                   iv.used_cache, i.name
+                   iv.used_cache, iv.expires_at, i.name
             FROM instance_volume iv
             JOIN instances i ON i.id = iv.instance_id
-            WHERE i.status = 'running' AND iv.limit_bytes IS NOT NULL AND iv.limit_bytes > 0
+            WHERE i.status = 'running'
+              AND ( (iv.limit_bytes IS NOT NULL AND iv.limit_bytes > 0)
+                    OR iv.expires_at IS NOT NULL )
             """
         )
     except Exception as exc:  # schema not migrated yet, DB hiccup, …
@@ -222,9 +312,27 @@ async def enforce_all(pool) -> None:
         return
     for row in rows:
         instance_id = str(row["instance_id"])
-        limit = int(row["limit_bytes"])
+        limit = int(row["limit_bytes"]) if row["limit_bytes"] else None
         baseline = int(row["baseline_bytes"] or 0)
+        expires_at = row["expires_at"]
         try:
+            if expires_at is not None:
+                expires_dt = _aware(expires_at)
+                if expires_dt <= _utcnow():
+                    log.info("time limit reached for %s (expired %s) — stopping",
+                             instance_id, expires_dt.isoformat())
+                    await deploy_svc.stop_instance(pool, instance_id)
+                    owner = await pool.fetchrow(
+                        "SELECT user_id FROM instances WHERE id = $1", instance_id)
+                    await _activity(
+                        pool, str(owner["user_id"]) if owner else None, instance_id,
+                        f"Instance '{row['name']}' stopped — time limit reached "
+                        f"(expired {_fmt_when(expires_dt)})",
+                        level="warn",
+                    )
+                    continue
+            if not limit:
+                continue
             total = await _live_total(pool, instance_id)
             if total is None:
                 continue
@@ -268,6 +376,37 @@ def _fmt(n: int) -> str:
     if gb >= 1:
         return f"{gb:.2f} GB"
     return f"{n / 1024 ** 2:.1f} MB"
+
+
+def _fmt_days(days: float | None) -> str:
+    if days is None:
+        return "unlimited"
+    if days >= 1:
+        return f"{days:.0f} days"
+    return f"{days * 24:.1f} hours"
+
+
+def _fmt_when(dt: datetime) -> str:
+    return _aware(dt).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def userinfo_header(state: dict | None) -> str:
+    """Standard ``subscription-userinfo`` header value proxy clients parse
+    (v2rayNG, Streisand, Happ, …): ``upload``/``download`` = bytes used,
+    ``total`` = volume cap, ``expire`` = unix timestamp of the time limit.
+    0 means unlimited — the convention every client understands — so an
+    empty value keeps the exact previous Default behavior."""
+    if not state:
+        return "upload=0; download=0; total=0; expire=0"
+    used = max(0, int(state.get("used_bytes") or 0))
+    limit = int(state["limit_bytes"]) if state.get("limit_bytes") else 0
+    expire = 0
+    if state.get("expires_at"):
+        try:
+            expire = int(_aware(datetime.fromisoformat(str(state["expires_at"]))).timestamp())
+        except ValueError:
+            expire = 0
+    return f"upload=0; download={used}; total={limit}; expire={expire}"
 
 
 async def _activity(pool, user_id, instance_id, message, level="info") -> None:

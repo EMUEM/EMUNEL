@@ -36,8 +36,8 @@ requests require the `X-EMUNEL-CSRF` header set to the session cookie value
 | GET | `/api/instances/:id/deployments/:depId/logs` | Pipeline logs for one deployment |
 | GET | `/api/instances/:id/activity` | Instance activity feed |
 | GET | `/api/activity` | User-wide activity feed |
-| GET | `/api/instances/:id/volume` | Volume state: `{limit_bytes, unlimited, used_bytes, live, percent, exceeded}` |
-| PUT | `/api/instances/:id/volume` | Set/clear the data cap. Body: `{limit_gb}` (fractional) or `{limit_bytes}`; empty/null/0 → Default = unlimited |
+| GET | `/api/instances/:id/volume` | Volume & time state: `{limit_bytes, unlimited, used_bytes, live, percent, exceeded, time_limit_days, expires_at, expired, seconds_remaining}` |
+| PUT | `/api/instances/:id/volume` | Set/clear the caps. Body: `{limit_gb}` (or `{limit_bytes}`) and/or `{time_limit_days}` (fractional days). Each key applies independently — send only the volume keys to leave the time limit untouched. Empty/null/0 → Default = unlimited |
 | POST | `/api/instances/:id/volume/reset` | Start a fresh accounting period (usage counter back to zero; Core counters untouched) |
 
 Volume behavior: usage is the Core's own lifetime traffic counter (persisted
@@ -46,6 +46,19 @@ When usage reaches the limit the Console stops the instance through the normal
 lifecycle path and records an activity event; deploy/redeploy answer `409`
 until the cap is raised or cleared. `EMUNEL_VOLUME_CHECK_SECONDS` (default 45)
 controls the enforcement interval.
+
+Time-limit behavior: `time_limit_days` sets an absolute expiry (now + days);
+empty clears it. When it passes, the instance is stopped through the same
+lifecycle path and deploy/redeploy answer `409` until the limit is extended
+or cleared.
+
+Subscription propagation: the public feed (`/i/<token>/sub`, all formats)
+reports the instance's real state through the standard `subscription-userinfo`
+header — `download` = current usage, `total` = the volume cap, `expire` = the
+time-limit timestamp (0 = unlimited, exactly the previous default behavior).
+The browser subscription page renders the same numbers in its Remaining/Time
+stat cards and an Active/Limited/Expired status. Values propagate live on
+every fetch — no instance recreation needed.
 
 Protocols: `vless-ws`, `trojan-ws`, `shadowsocks`, `xhttp-packet-up`,
 `xhttp-stream-up`.

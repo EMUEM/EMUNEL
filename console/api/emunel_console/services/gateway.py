@@ -316,6 +316,16 @@ async def instance_subscription(token: str, request: Request):
     except Exception as exc:
         return _page("Unavailable", f"Could not read the instance configs: {str(exc)[:160]}",
                      status=502)
+
+    # Real quota state — the same numbers the panel shows (volume cap, usage,
+    # time limit). Feeds both the client-parsed header and the HTML page.
+    from . import volume as _volume_svc
+
+    try:
+        quota = await _volume_svc.get_state(pool, target["instance_id"])
+    except Exception:
+        quota = None
+
     title = f"EMUNEL \u00b7 {inst['name']}"
     from fastapi.responses import Response as _Response
 
@@ -334,12 +344,17 @@ async def instance_subscription(token: str, request: Request):
         from fastapi.responses import HTMLResponse
 
         return HTMLResponse(_sub_html_page(title, configs, host, f"/i/{token}/sub",
-                                           qr_path=f"/i/{token}/api/qr"))
+                                           qr_path=f"/i/{token}/api/qr", quota=quota))
+
+    # The quota the client sees is the instance's REAL state: total = the
+    # volume cap, expire = the time limit, download = current usage. 0 (or
+    # absence) keeps the previous Default — unlimited — behavior.
+    userinfo = _volume_svc.userinfo_header(quota)
 
     def _headers(extra: dict | None = None) -> dict:
         h = {
             "profile-title": "base64:" + _b64.b64encode(title.encode()).decode(),
-            "subscription-userinfo": "upload=0; download=0; total=0; expire=0",
+            "subscription-userinfo": userinfo,
             "profile-update-interval": "24",
             "profile-web-page-url": f"{request.url.scheme}://{request.headers.get('host', host)}",
         }
@@ -359,7 +374,7 @@ async def instance_subscription(token: str, request: Request):
         outbounds = [_singbox_outbound(u) for u in links]
         payload = _json.dumps({"outbounds": outbounds}, ensure_ascii=False, indent=2)
         return _Response(content=payload, media_type="application/json",
-                         headers=_headers({"subscription-userinfo": "upload=0; download=0; total=0; expire=0"}))
+                         headers=_headers())
 
     if fmt in ("clash", "clash-meta", "yaml"):
         proxies = [_clash_proxy(u) for u in links]

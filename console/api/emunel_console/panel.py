@@ -317,7 +317,7 @@ function viewDash(){
     var ep=i.endpoint_url||(i.domain&&i.domain.indexOf("-")>0&&i.domain.length>30?null:null);
     return '<div class="ic" data-id="'+i.id+'"><div class="t"><span class="nm">'+esc(i.name)+"</span>"+stEl(i.status).outerHTML+"</div>"+
       (i.endpoint_url?'<div class="ep">'+esc(i.endpoint_url)+"</div>":'<div class="ep ftx">no endpoint yet</div>')+
-      '<div class="mt"><span>'+esc(i.region)+"</span>"+(i.volume_limit_bytes?'<span class="chip">'+fmtBytes(i.volume_limit_bytes)+"</span>":"")+"<span>"+i.deployments_count+' deploys</span><span>created '+ago(i.created_at)+"</span></div></div>";
+      '<div class="mt"><span>'+esc(i.region)+"</span>"+(i.volume_limit_bytes?'<span class="chip">'+fmtBytes(i.volume_limit_bytes)+"</span>":"")+(i.volume_expires_at?'<span class="chip">'+(Math.ceil((new Date(i.volume_expires_at)-Date.now())/864e5)||1)+"d left</span>":"")+"<span>"+i.deployments_count+' deploys</span><span>created '+ago(i.created_at)+"</span></div></div>";
   }
   load().then(function(list){
     pollTimer=every(6000,function(){
@@ -467,18 +467,24 @@ function viewInst(id){
       $("#cf-r").onclick=loadCfg;loadCfg();
     }
     else if(tab==="volume"){
-      b.innerHTML='<div class="card" style="max-width:620px"><div class="row" style="justify-content:space-between"><h3>'+ic("vol")+' Volume</h3><button class="btn sm" id="vrf">Refresh</button></div>'+
-        '<p class="mut" style="font-size:12.5px;margin:6px 0 16px">Data transferred through this instance. Leave the limit empty for the default — unlimited.</p>'+
+      b.innerHTML='<div class="card" style="max-width:620px"><div class="row" style="justify-content:space-between"><h3>'+ic("vol")+' Volume & time</h3><button class="btn sm" id="vrf">Refresh</button></div>'+
+        '<p class="mut" style="font-size:12.5px;margin:6px 0 16px">Usage and caps for this instance. Leave a limit empty for the default — unlimited.</p>'+
         '<div id="vt"></div></div>'+
-        '<div class="card" style="max-width:620px;margin-top:14px"><h3>Limit</h3>'+
-        '<div class="row" style="margin-top:12px"><div class="fld" style="width:190px;margin:0"><label>Volume limit (GB)</label><input class="inp" id="vg" type="number" min="0.001" step="0.1" placeholder="unlimited"></div><div class="grow"></div></div>'+
-        '<div class="row" style="margin-top:2px;gap:6px" id="vp"></div>'+
-        '<div class="row" style="margin-top:16px"><button class="btn pri" id="vs">Save limit</button><button class="btn" id="vr">Reset usage counter</button></div>'+
+        '<div class="card" style="max-width:620px;margin-top:14px"><h3>Limits</h3>'+
+        '<div class="row" style="margin-top:12px;flex-wrap:wrap"><div class="fld" style="width:190px;margin:0"><label>Volume limit (GB)</label><input class="inp" id="vg" type="number" min="0.001" step="0.1" placeholder="unlimited"></div>'+
+        '<div class="fld" style="width:190px;margin:0"><label>Time limit (days)</label><input class="inp" id="vtd" type="number" min="0.0007" step="any" placeholder="unlimited"></div><div class="grow"></div></div>'+
+        '<div class="row" style="margin-top:10px;gap:6px" id="vp"></div>'+
+        '<div class="row" style="margin-top:6px;gap:6px" id="vp2"></div>'+
+        '<div class="row" style="margin-top:16px"><button class="btn pri" id="vs">Save limits</button><button class="btn" id="vr">Reset usage counter</button></div>'+
         '<p class="fn" id="vn"></p></div>';
       var PRE=[10,50,100,250,500,0];
+      var TPRE=[7,30,90,180,365,0];
       $("#vp").innerHTML=PRE.map(function(g){return '<button class="qch" data-g="'+g+'">'+(g?g+" GB":"Unlimited")+"</button>"}).join("");
+      $("#vp2").innerHTML=TPRE.map(function(d){return '<button class="qch" data-d="'+d+'">'+(d?d+" days":"Unlimited")+"</button>"}).join("");
+      function fmtLeft(s){if(s==null||s<0)return"—";var d=Math.floor(s/86400),h=Math.floor(s%86400/3600);return d>=1?d+"d "+h+"h":h>=1?h+"h "+Math.floor(s%3600/60)+"m":Math.floor(s/60)+"m"}
       Array.prototype.forEach.call(b.querySelectorAll(".qch"),function(c){c.onclick=function(){
-        $("#vg").value=c.dataset.g==="0"?"":c.dataset.g;
+        if(c.dataset.g!==undefined){$("#vg").value=c.dataset.g==="0"?"":c.dataset.g}
+        else{$("#vtd").value=c.dataset.d==="0"?"":c.dataset.d}
         Array.prototype.forEach.call(b.querySelectorAll(".qch"),function(x){x.classList.toggle("on",x===c)})}});
       function loadV(){
         api("GET","/api/instances/"+id+"/volume").then(function(v){
@@ -492,9 +498,13 @@ function viewInst(id){
             '<div class="it"><div class="k">Limit</div><div class="v">'+(lim?fmtBytes(lim):"Unlimited")+"</div></div>"+
             '<div class="it"><div class="k">Used</div><div class="v">'+fmtBytes(v.used_bytes)+(v.live?"":" · cached")+"</div></div>"+
             '<div class="it"><div class="k">Remaining</div><div class="v">'+(v.remaining_bytes==null?"—":fmtBytes(v.remaining_bytes))+"</div></div>"+
-            '<div class="it"><div class="k">Source</div><div class="v">'+(v.live?"live core":"last known")+"</div></div></div>"+
-            (v.exceeded?'<p style="color:var(--red);font-size:12.5px;margin:12px 0 0">Limit reached — the instance is stopped. Raise or clear the limit, then deploy again.</p>':"");
+            '<div class="it"><div class="k">Source</div><div class="v">'+(v.live?"live core":"last known")+"</div></div>"+
+            '<div class="it"><div class="k">Time limit</div><div class="v">'+(v.time_limit_days!=null?(+v.time_limit_days)+" days":"Unlimited")+"</div></div>"+
+            '<div class="it"><div class="k">Expires in</div><div class="v">'+(v.expires_at?fmtLeft(v.seconds_remaining)+" · "+v.expires_at.slice(0,10):"—")+"</div></div></div>"+
+            (v.exceeded?'<p style="color:var(--red);font-size:12.5px;margin:12px 0 0">Volume limit reached — the instance is stopped. Raise or clear the limit, then deploy again.</p>':"")+
+            (v.expired?'<p style="color:var(--red);font-size:12.5px;margin:12px 0 0">Time limit reached — the instance is stopped. Extend or clear the limit, then deploy again.</p>':"");
           $("#vg").value=lim?String(+(lim/1073741824).toFixed(3)):"";
+          $("#vtd").value=v.time_limit_days!=null?String(+v.time_limit_days):"";
           $("#vn").textContent=v.used_at?("Usage last refreshed "+ago(v.used_at)+"."):"Usage refreshes while the instance runs.";
         }).catch(function(e){$("#vt").innerHTML='<span class="ftx">'+esc(e.message)+"</span>"});
       }
@@ -502,8 +512,10 @@ function viewInst(id){
       $("#vs").onclick=function(){
         var raw=$("#vg").value.trim(),gb=null;
         if(raw!==""){gb=parseFloat(raw);if(!isFinite(gb)||gb<=0){toast("Enter a positive number of GB — or leave it empty for unlimited","err");return}}
-        api("PUT","/api/instances/"+id+"/volume",{limit_gb:gb}).then(function(v){
-          toast(v.limit_bytes?("Limit set to "+fmtBytes(v.limit_bytes)):"Limit cleared — unlimited","ok");loadV()})
+        var traw=$("#vtd").value.trim(),td=null;
+        if(traw!==""){td=parseFloat(traw);if(!isFinite(td)||td<=0){toast("Enter a positive number of days — or leave it empty for unlimited","err");return}}
+        api("PUT","/api/instances/"+id+"/volume",{limit_gb:gb,time_limit_days:td}).then(function(v){
+          toast("Saved — "+(v.limit_bytes?("volume "+fmtBytes(v.limit_bytes)):"volume unlimited")+" · "+(v.expires_at?("time "+(+v.time_limit_days)+"d"):"time unlimited"),"ok");loadV()})
         .catch(function(e){toast(e.message,"err")})};
       $("#vr").onclick=function(){if(!confirm("Reset the usage counter? Everything transferred so far stops counting against the limit."))return;
         api("POST","/api/instances/"+id+"/volume/reset").then(function(){toast("Usage counter reset","ok");loadV()}).catch(function(e){toast(e.message,"err")})};
@@ -520,7 +532,8 @@ function viewInst(id){
           '<div class="it"><div class="k">Version</div><div class="v">'+esc(st.core_health&&st.core_health.version||"—")+"</div></div>"+
           '<div class="it"><div class="k">Region</div><div class="v">'+esc(inst.region)+"</div></div>"+
           '<div class="it"><div class="k">Health</div><div class="v" style="color:'+(st.healthy?"var(--grn)":"var(--fnt)")+'">'+(st.healthy?"healthy":"n/a")+"</div></div>"+
-          '<div class="it"><div class="k">Volume</div><div class="v">'+((inst.volume&&inst.volume.limit_bytes)?fmtBytes(inst.volume.limit_bytes):"unlimited")+"</div></div>";
+          '<div class="it"><div class="k">Volume</div><div class="v">'+((inst.volume&&inst.volume.limit_bytes)?fmtBytes(inst.volume.limit_bytes):"unlimited")+"</div></div>"+
+          '<div class="it"><div class="k">Time limit</div><div class="v">'+((inst.volume&&inst.volume.expires_at)?inst.volume.expires_at.slice(0,10):"unlimited")+"</div></div>";
         $("#odp").innerHTML=ld?'<div class="row">'+stEl(ld.status).outerHTML+'<span class="chip">v'+ld.version+'</span><span class="ftx">started '+ago(ld.started_at)+" · "+dur(ld.duration_ms)+"</span></div>"+(ld.error?'<p style="color:var(--red);font-size:12px;margin:7px 0 0">'+esc(ld.error)+"</p>":""):"—";
       }).catch(function(){});
     }

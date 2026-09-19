@@ -84,18 +84,118 @@ def _config_card(config: dict, number: int) -> str:
     </div>'''
 
 
+def _fmt_bytes(n: float) -> str:
+    gb = n / 1024 ** 3
+    if gb >= 1:
+        return f"{gb:.2f} GB"
+    mb = n / 1024 ** 2
+    if mb >= 1:
+        return f"{mb:.1f} MB"
+    return f"{n / 1024:.0f} KB"
+
+
+def _fmt_left(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    days = int(seconds // 86400)
+    hours = int((seconds % 86400) // 3600)
+    if days >= 1:
+        return f"{days}d {hours}h left"
+    minutes = int((seconds % 3600) // 60)
+    if hours >= 1:
+        return f"{hours}h {minutes}m left"
+    return f"{minutes}m left"
+
+
+def _stat_card(label: str, pct: str, fill_pct: float, color: str,
+               main: str, sub: str, *, main_style: str = "") -> str:
+    width = max(0.0, min(100.0, fill_pct))
+    style = f" style={main_style!r}".replace("'", '"') if main_style else ""
+    return (
+        '<div class="stat-card tz">'
+        f'<div class="label"><span>{escape(label)}</span>'
+        f'<span class="pct">{escape(pct)}</span></div>'
+        f'<div class="bar"><div class="fill" style="width:{width:.1f}%;'
+        f'background:var(--{color})"></div></div>'
+        f'<div class="values"><b{style}>{escape(main)}</b>'
+        f'<span>{escape(sub)}</span></div>'
+        '</div>'
+    )
+
+
+def _volume_card(quota: dict | None) -> str:
+    """Remaining-data stat card. quota=None keeps the legacy 'not reported'
+    look; a set limit renders the instance's real cap and usage."""
+    if not quota or not quota.get("limit_bytes"):
+        used = quota.get("used_bytes") if quota else None
+        sub = "Not reported / ∞" if used is None else f"{_fmt_bytes(used)} used · unlimited"
+        return _stat_card("Remaining", "∞", 100, "blue", "∞", sub)
+    limit = int(quota["limit_bytes"])
+    used = int(quota.get("used_bytes") or 0)
+    remaining = max(0, limit - used)
+    pct = float(quota.get("percent") or 0.0)
+    color = "red" if quota.get("exceeded") else ("amber" if pct > 80 else "blue")
+    return _stat_card("Remaining", f"{pct:.1f}%", pct, color,
+                      _fmt_bytes(remaining), f"{_fmt_bytes(used)} of {_fmt_bytes(limit)}")
+
+
+def _time_card(quota: dict | None) -> str:
+    """Time stat card. No expiry set → the legacy Unlimited look."""
+    expires_at = quota.get("expires_at") if quota else None
+    if not expires_at:
+        return _stat_card("Time", "∞", 100, "blue", "Unlimited", "—",
+                          main_style="color:var(--blue)")
+    try:
+        dt = datetime.fromisoformat(str(expires_at))
+    except ValueError:
+        return _stat_card("Time", "∞", 100, "blue", "Unlimited", "—",
+                          main_style="color:var(--blue)")
+    until = dt.strftime("%b %d, %Y")
+    seconds = quota.get("seconds_remaining")
+    seconds = float(seconds) if seconds is not None else None
+    if seconds is not None and seconds <= 0:
+        return _stat_card("Time", "0%", 0, "red", "Expired",
+                          f"ended {until}", main_style="color:var(--red)")
+    days = quota.get("time_limit_days")
+    if seconds is not None and days:
+        total = float(days) * 86400.0
+        pct = max(0.0, min(100.0, seconds / total * 100.0))
+        color = "amber" if pct < 20 else "blue"
+        return _stat_card("Time", f"{pct:.0f}%", pct, color,
+                          _fmt_left(seconds), f"until {until}",
+                          main_style="color:var(--blue)")
+    return _stat_card("Time", "—", 100, "blue", _fmt_left(seconds) if seconds is not None else "—",
+                      f"until {until}", main_style="color:var(--blue)")
+
+
+def _status_line(quota: dict | None) -> tuple[str, str]:
+    if quota and quota.get("expired"):
+        return "s-expired", "Expired"
+    if quota and quota.get("exceeded"):
+        return "s-limited", "Limited"
+    return "s-active", "Active"
+
+
 def render_subscription(title: str, configs: list, host: str, sub_path: str,
-                        qr_path: str = "") -> str:
-    """Keep browser-announced hosts when clients import the copied subscription."""
+                        qr_path: str = "", quota: dict | None = None) -> str:
+    """Keep browser-announced hosts when clients import the copied subscription.
+
+    quota is the instance's real volume/time state (volume.get_state); it
+    renders the Remaining/Time stat cards and the status dot. None keeps the
+    legacy unlimited/not-reported presentation."""
     sub_url = f"https://{host}{sub_path}?{urlencode({'host': host})}"
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=0)
     qr.add_data(sub_url)
     qr.make(fit=True)
     now = datetime.now(timezone.utc)
     cards = ([{"share_url": TELEGRAM_CONFIG}] if TELEGRAM_CONFIG else []) + list(configs)
+    status_class, status_label = _status_line(quota)
     values = {
         "BRAND": "EMUNEL",
         "TITLE": escape(title),
+        "STATUS_CLASS": status_class,
+        "STATUS_LABEL": escape(status_label),
+        "VOLUME_CARD": _volume_card(quota),
+        "TIME_CARD": _time_card(quota),
         "SUB_URL": escape(sub_url),
         "SUB_URL_JSON": json.dumps(sub_url).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"),
         "QR_MATRIX": json.dumps(qr.get_matrix(), separators=(",", ":")),
