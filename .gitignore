@@ -41,6 +41,10 @@ Thumbs.db
 *.log
 logs/
 
+# EMUNEL runtime state (instance data roots created by the manager)
+emunel-data/
+*-data/
+
 # Coverage
 htmlcov/
 .coverage
