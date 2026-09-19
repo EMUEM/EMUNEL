@@ -46,7 +46,10 @@ ENV EMUNEL_DATA_ROOT=/data \
 # EMUNEL_PORT is deliberately NOT set here:
 #   * Railway injects PORT at runtime — main.py honors it automatically.
 #   * Elsewhere the app defaults to 8000 (override with EMUNEL_PORT/-p).
-VOLUME ["/data"]
+#
+# NOTE: no VOLUME instruction — Railway's builder REJECTS Dockerfile VOLUME
+# (attach a Railway volume at /data instead; docker-compose declares the
+# bind mount itself, and plain `docker run` users pass -v emunel-data:/data).
 EXPOSE 8000 8080
 
 HEALTHCHECK --interval=15s --timeout=4s --start-period=10s --retries=3 \

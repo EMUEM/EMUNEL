@@ -8,6 +8,7 @@ and a zero-config bootstrap mode that generates strong secrets on first boot.
 
 | Problem | Symptom in Railway logs | Fix |
 |---|---|---|
+| Dockerfile `VOLUME` instruction | `dockerfile invalid: docker VOLUME at Line 49 is not supported, use Railway Volumes` → build fails instantly | Removed from the Dockerfile — attach a Railway volume at `/data` instead |
 | Secrets required at boot | `RuntimeError: EMUNEL_SECRET_KEY and JWT_SECRET_KEY must be replaced before production startup` → `Application startup failed. Exiting.` | Secrets are now **auto-generated** (persisted under `/data`) when not provided via env vars |
 | Port mismatch | App listening on `8000`, Railway routing to injected `PORT` → connection refused / "port not detected" | `main.py` honors the injected `PORT` (`EMUNEL_PORT` still wins if set) |
 | No build recipe | `deploy/Dockerfile` was not at repo root, so Railway fell back to Nixpacks guessing | Root `Dockerfile` + `railway.json` pin the build explicitly |
@@ -22,6 +23,8 @@ and a zero-config bootstrap mode that generates strong secrets on first boot.
    mount at `/data`. This persists the SQLite database, generated secrets,
    instance registry and per-instance link/traffic state across redeploys.
    Without a volume everything still works but resets on each redeploy.
+   (The Dockerfile deliberately contains no `VOLUME` instruction: Railway's
+   builder rejects it — platform volumes are attached from the dashboard.)
 3. *(Optional)* **Add PostgreSQL** — Settings → Database → add Railway
    Postgres. It injects `DATABASE_URL`, which EMUNEL normalizes to
    `postgresql+asyncpg://` automatically — no other change needed.
