@@ -1,48 +1,161 @@
-"""EMUNEL Core — Configuration."""
+"""Configuration system for EMUNEL Core.
 
+Sources, in ascending priority:
+  1. Defaults defined here.
+  2. Optional TOML configuration file (``--config /path/to/emunel-core.toml`` or
+     ``EMUNEL_CORE_CONFIG``). Only a handful of keys are honored; see ``FILE_KEYS``.
+  3. Environment variables.
+  4. CLI flags (parsed in ``__main__.py``).
+
+The config intentionally contains only the options a runtime actually needs.
+Secrets (``EMUNEL_CORE_API_TOKEN``) are never echoed in API responses or logs.
+"""
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import json
 import os
-from dataclasses import dataclass, field
-from typing import Optional
+from pathlib import Path
+
+try:  # Python 3.11+
+    import tomllib
+except ImportError:  # pragma: no cover
+    tomllib = None
 
 
-@dataclass
+PROTOCOLS = (
+    "vless-ws",
+    "xhttp-packet-up",
+    "xhttp-stream-up",
+    "trojan-ws",
+    "trojan-xhttp-packet-up",
+    "trojan-xhttp-stream-up",
+    "shadowsocks",
+    "vmess-ws",
+)
+DEFAULT_PROTOCOL = "vless-ws"
+
+CIPHERS = ("aes-256-gcm", "aes-192-gcm", "aes-128-gcm", "chacha20-ietf-poly1305")
+DEFAULT_CIPHER = "aes-256-gcm"
+
+FILE_KEYS = {
+    "port": int,
+    "log_level": str,
+    "state_path": str,
+    "quota_default_bytes": int,
+}
+
+
+@dataclasses.dataclass
 class CoreConfig:
-    """Core proxy configuration."""
+    # HTTP server (health API + websocket transports + xhttp)
+    port: int = 8000
+    host: str = "0.0.0.0"
 
-    listen_host: str = "0.0.0.0"
-    listen_port: int = 443
-    tls_cert: Optional[str] = None
-    tls_key: Optional[str] = None
-    max_connections: int = 10000
-    connection_timeout: float = 30.0
-    buffer_size: int = 8192
-    log_level: str = "INFO"
+    # Bearer token protecting the management API (/core/api/*).
+    # Health/readiness/version stay unauthenticated on purpose.
+    api_token: str = ""
 
-    # Quota
-    default_traffic_limit_gb: Optional[float] = None
-    enable_quota: bool = True
+    # Persistence for links & counters (JSON file, atomic writes).
+    state_path: str = "/data/state.json"
 
-    # Database URL for quota lookups
-    database_url: str = "sqlite+aiosqlite:///./emunel.db"
-    # Fail closed unless the control plane has explicitly loaded credentials.
-    require_registered_credentials: bool = True
+    # Logging
+    log_level: str = "info"
+    log_json: bool = False
 
-    @classmethod
-    def from_env(cls) -> "CoreConfig":
-        """Load configuration from environment variables."""
-        return cls(
-            listen_host=os.getenv("CORE_LISTEN_HOST", "0.0.0.0"),
-            listen_port=int(os.getenv("CORE_LISTEN_PORT", "443")),
-            tls_cert=os.getenv("CORE_TLS_CERT"),
-            tls_key=os.getenv("CORE_TLS_KEY"),
-            max_connections=int(os.getenv("CORE_MAX_CONNECTIONS", "10000")),
-            connection_timeout=float(os.getenv("CORE_CONN_TIMEOUT", "30.0")),
-            buffer_size=int(os.getenv("CORE_BUFFER_SIZE", "8192")),
-            log_level=os.getenv("CORE_LOG_LEVEL", "INFO"),
-            database_url=os.getenv(
-                "DATABASE_URL", "sqlite+aiosqlite:///./emunel.db"
-            ),
-            require_registered_credentials=os.getenv(
-                "CORE_REQUIRE_REGISTERED_CREDENTIALS", "true"
-            ).lower() in {"1", "true", "yes", "on"},
-        )
+    # Relay tuning
+    relay_buf: int = 256 * 1024
+    sock_buf: int = 512 * 1024
+    write_high_water: int = 128 * 1024
+    ws_handshake_timeout: float = 15.0
+    upstream_connect_timeout: float = 10.0
+
+    # Public hostname used when rendering share links (informational only;
+    # the Console normally injects this per instance).
+    public_host: str = ""
+
+    # VMess (opt-in): an explicitly installed, SHA256-pinned Xray executable.
+    # Core never downloads binaries and refuses to start VMess without both
+    # variables set. Runtime Xray processes bind loopback only.
+    xray_binary: str = ""
+    xray_sha256: str = ""
+    xray_max_runtimes: int = 32
+
+    def with_cli_overrides(self, ns: argparse.Namespace) -> "CoreConfig":
+        for field in ("port", "host", "config_file", "state_path", "log_level", "log_json", "public_host"):
+            value = getattr(ns, field, None)
+            if value is not None:
+                if field == "log_json":
+                    self.log_json = bool(value)
+                else:
+                    setattr(self, field, value)
+        return self
+
+
+def _load_toml(path: str | None) -> dict:
+    if not path:
+        return {}
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"config file not found: {path}")
+    if tomllib is None:  # pragma: no cover
+        raise RuntimeError("tomllib unavailable; use Python 3.11+")
+    with p.open("rb") as fh:
+        raw = tomllib.load(fh)
+    core = raw.get("core", raw)
+    out = {}
+    for key, typ in FILE_KEYS.items():
+        if key in core:
+            out[key] = typ(core[key])
+    return out
+
+
+def build_config(argv: list[str] | None = None) -> tuple[CoreConfig, argparse.Namespace]:
+    parser = argparse.ArgumentParser(prog="emunel-core", description="EMUNEL Core runtime")
+    parser.add_argument("--config", dest="config_file", default=os.environ.get("EMUNEL_CORE_CONFIG"))
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--host", default=None)
+    parser.add_argument("--state-path", default=None)
+    parser.add_argument("--log-level", default=None)
+    parser.add_argument("--log-json", action="store_true", default=None)
+    parser.add_argument("--public-host", default=None)
+    ns = parser.parse_args(argv)
+
+    cfg = CoreConfig()
+
+    for key, value in _load_toml(ns.config_file).items():
+        setattr(cfg, key, value)
+
+    env_map = {
+        "port": ("PORT", int),
+        "host": ("EMUNEL_CORE_HOST", str),
+        "api_token": ("EMUNEL_CORE_API_TOKEN", str),
+        "state_path": ("EMUNEL_CORE_STATE_PATH", str),
+        "log_level": ("EMUNEL_CORE_LOG_LEVEL", str),
+        "log_json": ("EMUNEL_CORE_LOG_JSON", lambda v: v.lower() in ("1", "true", "yes")),
+        "public_host": ("EMUNEL_CORE_PUBLIC_HOST", str),
+        "relay_buf": ("EMUNEL_CORE_RELAY_BUF", int),
+        "sock_buf": ("EMUNEL_CORE_SOCK_BUF", int),
+        "write_high_water": ("EMUNEL_CORE_WRITE_HIGH_WATER", int),
+        "ws_handshake_timeout": ("EMUNEL_CORE_WS_HANDSHAKE_TIMEOUT", float),
+        "upstream_connect_timeout": ("EMUNEL_CORE_UPSTREAM_CONNECT_TIMEOUT", float),
+        "xray_binary": ("EMUNEL_XRAY_BINARY", str),
+        "xray_sha256": ("EMUNEL_XRAY_SHA256", str),
+        "xray_max_runtimes": ("EMUNEL_XRAY_MAX_RUNTIMES", int),
+    }
+    for field, (env, cast) in env_map.items():
+        raw = os.environ.get(env)
+        if raw is not None and raw != "":
+            try:
+                setattr(cfg, field, cast(raw))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid value for {env}: {raw!r} ({exc})") from exc
+
+    if cfg.port < 1 or cfg.port > 65535:
+        raise ValueError(f"port out of range: {cfg.port}")
+    if cfg.log_level.lower() not in ("debug", "info", "warning", "error"):
+        raise ValueError(f"invalid log level: {cfg.log_level}")
+
+    cfg.with_cli_overrides(ns)
+    return cfg, ns

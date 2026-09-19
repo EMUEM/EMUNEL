@@ -1,52 +1,57 @@
-"""EMUNEL Core entry point.
+"""Entrypoint: ``python -m emunel_core [--config file] [--port N] ...``"""
+from __future__ import annotations
 
-Usage:
-    python -m emunel_core
-"""
-
-import asyncio
-import logging
-import signal
+import contextlib
 import sys
 
-from .app import ProxyServer
-from .config import CoreConfig
+import uvicorn
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("emunel.core")
+from .app import Core
+from .config import build_config
+from .logging import get, setup_logging
 
 
-async def run() -> None:
-    config = CoreConfig.from_env()
-    server = ProxyServer(config)
+def main(argv: list[str] | None = None) -> int:
+    try:
+        cfg, _ns = build_config(argv)
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"emunel-core: configuration error: {exc}", file=sys.stderr)
+        return 2
 
-    loop = asyncio.get_running_loop()
-    stop_event = asyncio.Event()
+    setup_logging(cfg.log_level, cfg.log_json)
+    log = get("runtime", "emunel.core")
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_event.set)
+    core = Core(cfg)
 
-    logger.info(
-        "EMUNEL Core starting on %s:%d", config.listen_host, config.listen_port
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        await core.store.load(core.links, core.stats)
+        from .version import info
+
+        log.info(
+            "EMUNEL Core %s (build=%s commit=%s) listening on %s:%d",
+            info()["version"], info()["build"], info()["commit"], cfg.host, cfg.port,
+        )
+        try:
+            yield
+        finally:
+            await core.vmess_runtime.close()
+            await core.store.save(core.links, core.stats)
+        log.info("EMUNEL Core shut down cleanly")
+
+    core.app.router.lifespan_context = lifespan
+
+    uvicorn.run(
+        core.app,
+        host=cfg.host,
+        port=cfg.port,
+        log_level=cfg.log_level,
+        workers=1,
+        loop="auto",
+        ws="auto",
     )
-
-    try:
-        await server.start()
-        await stop_event.wait()
-    finally:
-        await server.stop()
-        logger.info("EMUNEL Core stopped.")
-
-
-def main() -> None:
-    try:
-        asyncio.run(run())
-    except KeyboardInterrupt:
-        pass
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
