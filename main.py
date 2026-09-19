@@ -24,7 +24,9 @@ def main() -> None:
     from api.emunel_api.main import app  # noqa: F401
 
     host = os.getenv("EMUNEL_HOST", "0.0.0.0")
-    port = int(os.getenv("EMUNEL_PORT", "8000"))
+    # Railway/Heroku-style platforms inject PORT; EMUNEL_PORT wins when set
+    # explicitly (docker-compose, local overrides).
+    port = int(os.getenv("EMUNEL_PORT") or os.getenv("PORT") or "8000")
     debug = os.getenv("EMUNEL_DEBUG", "false").lower() == "true"
 
     logger.info("Starting EMUNEL on %s:%d (debug=%s)", host, port, debug)

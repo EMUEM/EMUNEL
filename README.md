@@ -50,9 +50,16 @@ EMUNEL adds the management layer on top.
 ```bash
 git clone https://github.com/mehdialadi-star/EMUNEL.git
 cd EMUNEL
-cp .env.example .env          # set real secrets
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
+
+With no `EMUNEL_*` secrets configured, strong ones are generated on first
+boot and persisted under the data volume; the initial admin password is
+printed once in the logs. Or set them explicitly via `.env`
+(`cp .env.example .env`).
+
+**Railway:** deploy the GitHub repo directly — the root `Dockerfile` +
+`railway.json` make it zero-config (see [docs/RAILWAY.md](docs/RAILWAY.md)).
 
 Then open `http://localhost:8080` → sign in with the seeded admin → create an
 instance → create a subscription → copy the `/sub/<token>` URL into your
@@ -70,6 +77,7 @@ EMUNEL_DEBUG=true python main.py
 
 - [Architecture](docs/ARCHITECTURE.md) — components, wire surface, security invariants, sync model
 - [Deployment](docs/DEPLOYMENT.md) — Docker, PostgreSQL, reverse proxy, VMess, operations
+- [Railway](docs/RAILWAY.md) — one-click cloud deploy, zero-config secrets, volume setup
 - [Audit](EMUNEL_AUDIT.md) — reference comparison and honest state assessment
 - [Performance](PERFORMANCE.md) — measured benchmarks
 

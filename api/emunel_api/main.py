@@ -63,7 +63,19 @@ async def _seed_admin() -> None:
         )
         db.add(admin)
         await db.commit()
-        logger.warning("seeded initial admin account %r — change this password", settings.admin_username)
+        if settings.admin_password_generated:
+            # Bootstrap credential for a zero-config deploy: shown ONCE, on
+            # first seed only. Change it in the UI right after first login,
+            # or take control by setting EMUNEL_ADMIN_PASSWORD in the env.
+            logger.warning("=" * 64)
+            logger.warning("initial admin %r seeded with auto-generated password: %s",
+                           settings.admin_username, settings.admin_password)
+            logger.warning("change it immediately after first login (Users -> admin), "
+                           "or set EMUNEL_ADMIN_PASSWORD to control it")
+            logger.warning("=" * 64)
+        else:
+            logger.warning("seeded initial admin account %r — change this password",
+                           settings.admin_username)
 
 
 @asynccontextmanager

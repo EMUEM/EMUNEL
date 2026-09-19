@@ -4,6 +4,7 @@ Supports PostgreSQL (asyncpg) for production and SQLite (aiosqlite) for developm
 """
 
 import logging
+from pathlib import Path
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -33,6 +34,11 @@ _engine_kwargs = {
 # SQLite needs special connect_args
 if settings.database_url.startswith("sqlite"):
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
+    # the default DSN lives under EMUNEL_DATA_ROOT (a volume in deployments)
+    # — make sure the directory exists before the engine opens the file
+    _sqlite_path = settings.database_url.split(":///", 1)[-1]
+    if _sqlite_path and _sqlite_path != ":memory:":
+        Path(_sqlite_path).parent.mkdir(parents=True, exist_ok=True)
 
 engine: AsyncEngine = create_async_engine(settings.database_url, **_engine_kwargs)
 

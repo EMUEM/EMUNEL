@@ -36,6 +36,18 @@ REGISTRY_PATH = DATA_ROOT / "instances.json"
 CORE_STARTUP_TIMEOUT = float(os.environ.get("EMUNEL_CORE_STARTUP_TIMEOUT", "15"))
 
 
+def _core_bind_host() -> str:
+    """Interface the Core subprocesses bind.
+
+    Loopback by default (VPS/bare-metal: unreachable from outside the host).
+    On Railway/Fly the edge proxy only routes DECLARED ports, so containers
+    set EMUNEL_CORE_BIND_HOST=0.0.0.0 to make instance ports exposable via
+    per-port domains/TCP proxies.
+    """
+    return os.environ.get("EMUNEL_CORE_BIND_HOST", "127.0.0.1")
+
+
+
 class DriverError(RuntimeError):
     pass
 
@@ -51,26 +63,27 @@ class PortAllocator:
         self._taken: dict[int, str] = {}
 
     @staticmethod
-    def _bindable(port: int) -> bool:
+    def _bindable(port: int, host: str = "127.0.0.1") -> bool:
         import socket as _socket
 
         try:
             with _socket.socket() as s:
                 s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 0)
-                s.bind(("127.0.0.1", port))
+                s.bind((host, port))
                 return True
         except OSError:
             return False
 
     def allocate(self, owner: str, preferred: Optional[int] = None) -> int:
-        if preferred is not None and preferred not in self._taken and self._bindable(preferred):
+        host = _core_bind_host()
+        if preferred is not None and preferred not in self._taken and self._bindable(preferred, host):
             self._free.discard(preferred)
             self._taken[preferred] = owner
             return preferred
         while self._free:
             port = min(self._free)
             self._free.discard(port)
-            if self._bindable(port):
+            if self._bindable(port, host):
                 self._taken[port] = owner
                 return port
         raise DriverError("no free ports in instance port range")
@@ -200,7 +213,7 @@ class InstanceManager:
             proc = await asyncio.create_subprocess_exec(
                 *self._core_cmd(),
                 "--port", str(port),
-                "--host", "127.0.0.1",
+                "--host", _core_bind_host(),
                 "--state-path", full_spec["state_path"],
                 stdout=log_fh,
                 stderr=subprocess.STDOUT,

@@ -5,12 +5,15 @@
 ```bash
 git clone https://github.com/mehdialadi-star/EMUNEL.git
 cd EMUNEL
-cp .env.example .env
-# EDIT .env — the service refuses to boot in production mode with
-# placeholder secrets (EMUNEL_SECRET_KEY / EMUNEL_JWT_SECRET_KEY must be
-# 32+ random chars; EMUNEL_ADMIN_PASSWORD 12+ chars).
+cp .env.example .env   # optional — with no secrets set, strong ones are
+                       # generated on first boot (see RAILWAY.md)
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
+
+The stack now builds from the **root `Dockerfile`** (the same image Railway
+uses). With the `EMUNEL_*` secret variables unset, strong secrets are
+auto-generated on first boot and persisted under `/data` — see
+[RAILWAY.md](RAILWAY.md) for the cloud deploy guide.
 
 - Console + API: `http://<host>:8080` (dashboard at `/`, docs at `/api/docs`)
 - Persistent state: the `emunel-data` volume holds the DB (SQLite default) and

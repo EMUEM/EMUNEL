@@ -1,0 +1,5 @@
+# Deterministic Nixpacks configuration (fallback path if the Railway service
+# is explicitly set to NIXPACKS instead of using the root Dockerfile).
+# requirements.txt at the repo root already covers API + Core dependencies.
+[start]
+cmd = "python main.py"
