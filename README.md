@@ -1,167 +1,109 @@
 # ⚡ EMUNEL
 
 ```
-███████╗███╗   ███╗██╗   ██╗███╗   ██╗███████╗██╗     
-██╔════╝████╗ ████║██║   ██║████╗  ██║██╔════╝██║     
-█████╗  ██╔████╔██║██║   ██║██╔██╗ ██║█████╗  ██║     
-██╔══╝  ██║╚██╔╝██║██║   ██║██║╚██╗██║██╔══╝  ██║     
-███████╗██║ ╚═╝ ██║╚██████╔╝██║ ╚████║███████╗███████╗
+███████╗███╗   ███╗██╗   ██╗███╗   ██╗███████╗██╗
+██╔════╝████╗ ████║██║   ██║████╗  ██║██╔════╝██║
+█████╗  ██╔████╔██║██║   ██║██╔██╗ ██║█████╗  ██║
+██╔══╝  ██║╚██╔╝██║██║   ██║██║╚██╗██║██╔══╝  ██║
+███████╗██║ ╚═╝ ██║╚██████╔╝██║ ╚████║███████║███████╗
 ╚══════╝╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝╚══════╝
 ```
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue?style=flat-square&logo=python)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green?style=flat-square&logo=fastapi)
-![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
-![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
-![PWA](https://img.shields.io/badge/PWA-Enabled-purple?style=flat-square)
+> **Production-ready proxy management platform** — an evolution of the
+> [Lunel](https://github.com/ArasTey/lunel) architecture with the proven
+> networking core preserved verbatim, plus subscription management, real
+> monitoring, real diagnostics and a fast glass console UI.
 
-> **Premium multi-protocol proxy management platform**
-
-EMUNEL is a modern, feature-rich proxy management platform with support for VLESS, Trojan, and Shadowsocks protocols. Built with a stunning glass UI, dark mode, mobile-first design, subscription management, and real network diagnostics.
-
----
-
-## ✨ Features
-
-🔐 **Multi-Protocol Support** — VLESS, Trojan, Shadowsocks with modular plugin architecture  
-🎨 **Glass UI Design** — Premium dark theme with glassmorphism, neon accents, smooth animations  
-📱 **Mobile-First PWA** — Installable progressive web app, responsive on all devices  
-👥 **User Management** — Role-based access, JWT auth, API keys, subscription tiers  
-📊 **Real-Time Dashboard** — Live CPU, RAM, Disk, Network stats with canvas charts  
-🔄 **Subscription Engine** — Traffic limits, auto-renew, auto-disable, monthly resets, device limits  
-🌐 **Network Diagnostics** — Real TCP, TLS, DNS, WebSocket, and latency tests (no fakes)  
-🏗️ **Node Management** — Multi-node deployment with Docker/process drivers and heartbeat  
-📈 **Analytics & Logs** — Traffic analytics, audit trails, Prometheus metrics  
-🌍 **i18n** — English + Persian (فارسی) with full RTL support  
-🐳 **Docker Ready** — Full stack docker-compose with PostgreSQL, Nginx reverse proxy  
-🔌 **Plugin System** — Extensible protocol support via plugin registry  
+The networking engine is Lunel's battle-tested relay (VLESS / Trojan /
+Shadowsocks / VMess over WebSocket + xHTTP) ported wire-compatibly —
+fail-closed credentials, EWMA batched quota accounting, per-instance isolation.
+EMUNEL adds the management layer on top.
 
 ---
 
-## 🏗️ Architecture
+## What works (and is tested)
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    EMUNEL Platform                    │
-├──────────┬──────────────┬──────────┬────────────────┤
-│          │              │          │                │
-│  Dashboard│    API       │  Core    │    Worker      │
-│  (SPA)   │  (FastAPI)   │ (Proxy)  │   (Agent)      │
-│          │              │          │                │
-│  Glass UI│  /api/v1/*   │  VLESS   │  Docker Driver │
-│  PWA     │  JWT Auth    │  Trojan  │  Process Driver│
-│  i18n    │  PostgreSQL  │  SS      │  Heartbeat     │
-│  Charts  │  Prometheus  │  Plugins │  Auto-deploy   │
-│          │              │          │                │
-├──────────┴──────────────┴──────────┴────────────────┤
-│              Docker Compose / Nginx                   │
-│              PostgreSQL / SQLite                      │
-└─────────────────────────────────────────────────────┘
-```
+- **Multi-protocol core** — VLESS, Trojan, Shadowsocks AEAD over WebSocket;
+  VLESS/Trojan over xHTTP (packet-up & stream-up); VMess via pinned Xray (opt-in)
+- **Instance architecture** — every instance is an isolated Core subprocess:
+  own port, own state file, own management token, own protocols, own quota
+  budget. Restart-safe with automatic recovery.
+- **Subscriptions** — traffic quotas (GB / unlimited), expiry presets
+  (1/7/30/60/90/custom days), extend, renew, revoke, reset, monthly resets,
+  device counting — enforced fail-closed by the Core, never bypassed.
+- **Traffic accounting** — batched at the Core (EWMA), synced to the console
+  at low frequency, visible per user / subscription / instance / link.
+- **Dashboard** — 11 sections, every number from live backend data. Empty
+  states when there is nothing to show; never simulated values.
+- **Diagnostics** — real, measured DNS / TCP / TLS / SNI / HTTP / WebSocket /
+  xHTTP probes with labelled latency types, on-demand, rate limited.
+- **Health system** — liveness, readiness, database, instances, manager, sync
+  reported independently; failures degrade, never cascade.
+- **UI** — dark glass design (restrained blur), EN + فارسی with full RTL,
+  mobile-first responsive, PWA manifest, no build step, no framework.
+- **Security** — JWT auth, RBAC, bcrypt (with >72-byte pre-hashing), startup
+  secret validation, secret redaction in every Core log, tokens never in API
+  responses.
 
----
-
-## 🚀 Quick Start
-
-### Docker (Recommended)
+## Quick start
 
 ```bash
 git clone https://github.com/mehdialadi-star/EMUNEL.git
 cd EMUNEL
-cp .env.example .env
-# Edit .env with your settings
-docker compose -f docker/docker-compose.yml up -d
+cp .env.example .env          # set real secrets
+docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-Dashboard: `http://localhost:8080`  
-API Docs: `http://localhost:8000/api/docs`
+Then open `http://localhost:8080` → sign in with the seeded admin → create an
+instance → create a subscription → copy the `/sub/<token>` URL into your
+client. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-### Local Development
+Local development:
 
 ```bash
-git clone https://github.com/mehdialadi-star/EMUNEL.git
-cd EMUNEL
-python -m venv venv
-source venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-python main.py
+EMUNEL_DEBUG=true python main.py
 ```
 
-### Railway One-Click Deploy
+## Documentation
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template)
+- [Architecture](docs/ARCHITECTURE.md) — components, wire surface, security invariants, sync model
+- [Deployment](docs/DEPLOYMENT.md) — Docker, PostgreSQL, reverse proxy, VMess, operations
+- [Audit](EMUNEL_AUDIT.md) — reference comparison and honest state assessment
+- [Performance](PERFORMANCE.md) — measured benchmarks
 
----
+## Tests
 
-## 📸 Screenshots
+```bash
+python -m pytest tests/ -q
+```
 
-> Screenshots coming soon — the glass UI is worth the wait ✨
+The suite covers wire-level protocol round-trips (headers, AEAD streams,
+share links), real end-to-end tunnels through a live Core (VLESS relay, quota
+cut-off, fail-closed rejects), and the full platform integration: instance
+launch → subscription provisioning → real traffic → counter sync-back →
+revocation.
 
-| Dashboard | Nodes | Network Tests |
-|-----------|-------|---------------|
-| *Coming soon* | *Coming soon* | *Coming soon* |
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| **Backend** | Python 3.11+, FastAPI, SQLAlchemy (async), Pydantic v2 |
-| **Frontend** | Vanilla ES Modules, CSS Glass Design System, Canvas Charts |
-| **Database** | PostgreSQL (primary), SQLite (fallback) |
-| **Proxy Core** | asyncio, VLESS/Trojan/Shadowsocks relay |
-| **Worker** | Docker SDK, Process management, Heartbeat |
-| **Infra** | Docker Compose, Nginx, Prometheus |
-| **Auth** | JWT, API Keys, RBAC |
-| **i18n** | EN + FA with RTL |
-
----
-
-## 📁 Project Structure
+## Project structure
 
 ```
 EMUNEL/
-├── core/              # Proxy runtime (VLESS, Trojan, SS)
-├── api/               # FastAPI backend (versioned)
-├── dashboard/         # Frontend SPA (no build step)
-├── worker/            # Node agent with drivers
-├── docker/            # Docker Compose & Nginx
-├── docs/              # Architecture, API, Deployment docs
-├── tests/             # Test suite
-├── main.py            # Single-service entry point
-└── requirements.txt   # Combined dependencies
+├── core/emunel_core/     # the networking engine (ported from Lunel)
+│   ├── relay/            # vless, trojan, shadowsocks, vmess, xhttp + base
+│   ├── state.py          # LinkStore / ConnectionTracker / RuntimeStats / StateStore
+│   └── links.py          # share-link + subscription payload generation
+├── api/emunel_api/       # console API
+│   ├── models/           # user, node, instance+link, subscription, audit
+│   ├── routers/v1/       # 13 routers (instances, subscriptions, traffic, ...)
+│   └── services/         # instance_manager, core_client, link_sync,
+│                         # diagnostics, health
+├── dashboard/            # SPA (vanilla ES modules, no build step)
+├── deploy/               # Dockerfile + docker-compose
+├── docs/                 # architecture + deployment
+└── tests/                # protocol, e2e core, platform integration
 ```
 
----
+## License
 
-## 📖 Documentation
-
-- [Architecture](docs/ARCHITECTURE.md)
-- [API Reference](docs/API.md)
-- [Deployment Guide](docs/DEPLOYMENT.md)
-- [Security](docs/SECURITY.md)
-- [Development](docs/DEVELOPMENT.md)
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
-
-<p align="center">
-  <b>EMUNEL</b> — Premium Proxy Management, Redefined ⚡
-</p>
+MIT — same as the Lunel reference.
