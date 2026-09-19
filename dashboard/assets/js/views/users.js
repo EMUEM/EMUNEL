@@ -48,7 +48,7 @@ export async function mount(el) {
             await api.post("/auth/register", {
               username: fd.get("username"), password: fd.get("password"), email: fd.get("email") || null,
             });
-            close(); toast("✓", "ok"); mount(el);
+            close(); toast(t("common.saved"), "ok"); mount(el);
           } },
       ]);
   });
@@ -56,7 +56,7 @@ export async function mount(el) {
   el.querySelectorAll('[data-uact="toggle"]').forEach((b) => {
     b.addEventListener("click", async () => {
       await api.patch(`/users/${b.dataset.uid}`, { is_active: b.dataset.active !== "true" });
-      toast("✓", "ok"); mount(el);
+      toast(t("common.saved"), "ok"); mount(el);
     });
   });
 }

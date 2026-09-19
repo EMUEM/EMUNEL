@@ -4,19 +4,20 @@
 import { api, getToken, setToken } from "./api.js";
 import { t, setLang, toggleLang, applyDirection, applyTranslations, lang } from "./i18n.js";
 import { toast } from "./components.js";
+import { icon, brandMark } from "./icons.js";
 
 const ROUTES = [
-  { id: "dashboard", ico: "◈", view: () => import("./views/dashboard.js") },
-  { id: "instances", ico: "▤", view: () => import("./views/instances.js") },
-  { id: "nodes", ico: "⬡", view: () => import("./views/nodes.js") },
-  { id: "users", ico: "◍", view: () => import("./views/users.js") },
-  { id: "subscriptions", ico: "◆", view: () => import("./views/subscriptions.js") },
-  { id: "traffic", ico: "∿", view: () => import("./views/traffic.js") },
-  { id: "analytics", ico: "◨", view: () => import("./views/analytics.js") },
-  { id: "connections", ico: "◉", view: () => import("./views/connections.js") },
-  { id: "diagnostics", ico: "⊹", view: () => import("./views/diagnostics.js") },
-  { id: "logs", ico: "≣", view: () => import("./views/logs.js") },
-  { id: "settings", ico: "⚙", view: () => import("./views/settings.js") },
+  { id: "dashboard", ico: "dashboard", view: () => import("./views/dashboard.js") },
+  { id: "instances", ico: "instances", view: () => import("./views/instances.js") },
+  { id: "nodes", ico: "nodes", view: () => import("./views/nodes.js") },
+  { id: "users", ico: "users", view: () => import("./views/users.js") },
+  { id: "subscriptions", ico: "subscriptions", view: () => import("./views/subscriptions.js") },
+  { id: "traffic", ico: "traffic", view: () => import("./views/traffic.js") },
+  { id: "analytics", ico: "analytics", view: () => import("./views/analytics.js") },
+  { id: "connections", ico: "connections", view: () => import("./views/connections.js") },
+  { id: "diagnostics", ico: "diagnostics", view: () => import("./views/diagnostics.js") },
+  { id: "logs", ico: "logs", view: () => import("./views/logs.js") },
+  { id: "settings", ico: "settings", view: () => import("./views/settings.js") },
 ];
 const MOBILE_ROUTES = ["dashboard", "instances", "subscriptions", "connections", "diagnostics"];
 
@@ -29,12 +30,20 @@ function route() {
 
 function renderNav() {
   const nav = document.getElementById("nav");
-  nav.innerHTML = ROUTES.map(
-    (r) => `<a href="#/${r.id}" data-route="${r.id}"><span class="ico">${r.ico}</span><span>${t(`nav.${r.id}`)}</span></a>`
-  ).join("");
+  const groups = {
+    overview: ["dashboard", "instances", "nodes", "users"],
+    service: ["subscriptions", "traffic", "analytics", "connections"],
+    ops: ["diagnostics", "logs", "settings"],
+  };
+  nav.innerHTML = Object.entries(groups).map(([g, ids]) => `
+    <div class="nav-label">${t(`navGroup.${g}`)}</div>
+    ${ids.map((id) => {
+      const r = ROUTES.find((x) => x.id === id);
+      return `<a href="#/${r.id}" data-route="${r.id}">${icon(r.ico)}<span>${t(`nav.${r.id}`)}</span></a>`;
+    }).join("")}`).join("");
   const bottom = document.getElementById("bottom-nav");
   bottom.innerHTML = ROUTES.filter((r) => MOBILE_ROUTES.includes(r.id)).map(
-    (r) => `<a href="#/${r.id}" data-route="${r.id}"><span class="ico">${r.ico}</span><span>${t(`nav.${r.id}`)}</span></a>`
+    (r) => `<a href="#/${r.id}" data-route="${r.id}">${icon(r.ico, 19)}<span>${t(`nav.${r.id}`)}</span></a>`
   ).join("");
 }
 
@@ -54,7 +63,7 @@ async function render() {
     const mod = await r.view();
     currentCleanup = await mod.mount(view) || null;
   } catch (e) {
-    view.innerHTML = `<div class="state-box"><span class="ico">✕</span><div>${t("common.error")}</div><div class="muted">${(e.message || e)}</div></div>`;
+    view.innerHTML = `<div class="state-box">${icon("alert", 28)}<div class="big">${t("common.error")}</div><div class="muted">${(e.message || e)}</div></div>`;
   }
 }
 
@@ -111,6 +120,12 @@ function showLogin() {
 async function boot() {
   applyDirection();
 
+  // static chrome icons (no emojis anywhere)
+  document.getElementById("login-logo").innerHTML = brandMark;
+  document.getElementById("brand-mark").innerHTML = brandMark;
+  document.getElementById("menu-btn").innerHTML = icon("menu", 18);
+  document.getElementById("lang-ico").innerHTML = icon("globe", 14);
+
   document.getElementById("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = document.getElementById("login-error");
@@ -121,7 +136,7 @@ async function boot() {
         document.getElementById("login-password").value
       );
       document.getElementById("user-chip").textContent = data.user?.username || "";
-      toast(t("nav.dashboard") + " ✓", "ok");
+      toast(t("nav.dashboard"), "ok");
       showShell();
     } catch (ex) {
       err.textContent = ex.message || t("login.failed");

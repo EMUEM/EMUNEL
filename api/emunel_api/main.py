@@ -1,5 +1,6 @@
 """EMUNEL API — FastAPI application (unified console)."""
 
+import asyncio
 import base64
 import logging
 import os
@@ -46,7 +47,9 @@ DASHBOARD_DIR = Path(__file__).resolve().parents[2] / "dashboard"
 
 
 async def _seed_admin() -> None:
-    """Create the initial admin account if the users table is empty."""
+    """Zero-config bootstrap (reference parity): if no users exist, create
+    admin/admin so the panel is usable immediately. Change the password in
+    Users -> admin after first login."""
     from .database import async_session
 
     async with async_session() as db:
@@ -63,35 +66,66 @@ async def _seed_admin() -> None:
         )
         db.add(admin)
         await db.commit()
-        if settings.admin_password_generated:
-            # Bootstrap credential for a zero-config deploy: shown ONCE, on
-            # first seed only. Change it in the UI right after first login,
-            # or take control by setting EMUNEL_ADMIN_PASSWORD in the env.
+        if settings.using_default_admin:
             logger.warning("=" * 64)
-            logger.warning("initial admin %r seeded with auto-generated password: %s",
-                           settings.admin_username, settings.admin_password)
-            logger.warning("change it immediately after first login (Users -> admin), "
-                           "or set EMUNEL_ADMIN_PASSWORD to control it")
+            logger.warning(
+                "seeded default account %s/%s — change the password after first login",
+                settings.admin_username, settings.admin_password,
+            )
             logger.warning("=" * 64)
         else:
             logger.warning("seeded initial admin account %r — change this password",
                            settings.admin_username)
 
 
+async def _startup_with_recovery() -> None:
+    """Never-crash startup: DB outages degrade instead of killing the app.
+
+    If the database cannot be reached (platform start-up race), keep the
+    process alive: /health answers, /ready reports not-ready, and a
+    background task retries every 15s until it comes up."""
+    try:
+        await init_db()
+        await _seed_admin()
+    except Exception as exc:  # noqa: BLE001 — keep the container alive
+        logger.error("startup blocked on database (%s) — serving degraded, retrying in background", exc)
+
+        async def _retry_forever() -> None:
+            import asyncio
+
+            while True:
+                await asyncio.sleep(15)
+                try:
+                    await init_db(max_attempts=1)
+                    await _seed_admin()
+                    logger.info("database recovered — full functionality restored")
+                    return
+                except Exception as exc2:  # noqa: BLE001
+                    logger.warning("database still unreachable: %s", type(exc2).__name__)
+
+        asyncio.ensure_future(_retry_forever())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Startup: validate config, open DB, recover instances, start sync."""
     settings.validate_runtime()
-    await init_db()
-    await _seed_admin()
+    await _startup_with_recovery()
 
     # Instance manager + restart recovery (relaunches registered Cores with
     # identical credentials; state files preserve links and counters).
-    im.manager = im.InstanceManager()
-    recovered = await im.manager.recover()
+    try:
+        im.manager = im.InstanceManager()
+        recovered = await im.manager.recover()
+    except Exception as exc:  # noqa: BLE001 — instances degrade, not the app
+        logger.error("instance manager failed to start (%s) — Instances degraded", exc)
+        recovered = 0
 
     # Link sync worker: pushes policy, pulls counters (batched).
-    link_sync.sync_worker.start(async_session)
+    try:
+        link_sync.sync_worker.start(async_session)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("link sync worker failed to start (%s) — sync degraded", exc)
 
     logger.info("EMUNEL API up (instances recovered: %d)", recovered)
     try:

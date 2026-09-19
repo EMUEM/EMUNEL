@@ -116,7 +116,7 @@ function createDialog(el, users, instances) {
     </div>
     <div class="row">
       <label class="field"><span>${t("subs.deviceLimit")}</span><input name="device_limit" type="number" min="1" max="64" placeholder="—" /></label>
-      <label class="field"><span>${t("subs.autoRenew")}</span><select name="auto_renew"><option value="false">—</option><option value="true">✓</option></select></label>
+      <label class="field"><span>${t("subs.autoRenew")}</span><select name="auto_renew"><option value="false">—</option><option value="true">yes</option></select></label>
     </div>
     <label class="field"><span>${t("subs.targetInstance")}</span>
       ${instOpts ? `<select name="instance_id"><option value="">—</option>${instOpts}</select>` : `<input disabled placeholder="${t("inst.stoppedHint")}" />`}
@@ -141,7 +141,7 @@ function createDialog(el, users, instances) {
             protocol: fd.get("protocol") || null,
           };
           await api.post("/subscriptions", body);
-          close(); toast(t("common.create") + " ✓", "ok");
+          close(); toast(t("common.created"), "ok");
           refresh(el, true);
         } },
     ]);
@@ -171,7 +171,7 @@ function lifecycle(el, act, sid, sname) {
         { label: t("common.confirm"), kind: "primary", onClick: async (back, close) => {
             const days = parseInt(back.querySelector("#ext-days").value) || 1;
             await api.post(`/subscriptions/${sid}/${act}`, { days });
-            close(); toast("✓", "ok"); refresh(el, true);
+            close(); toast(t("common.saved"), "ok"); refresh(el, true);
           } },
       ]);
     return;
@@ -180,12 +180,12 @@ function lifecycle(el, act, sid, sname) {
     modal(`${t("subs.revoke")} — ${sname || ""}`, `<p>${t("common.confirm")}?</p>`, [
       { label: t("common.cancel") },
       { label: t("subs.revoke"), kind: "danger", onClick: async (_b, close) => {
-          await api.post(`/subscriptions/${sid}/revoke`); close(); toast("✓", "ok"); refresh(el, true);
+          await api.post(`/subscriptions/${sid}/revoke`); close(); toast(t("common.saved"), "ok"); refresh(el, true);
         } },
     ]);
     return;
   }
   if (act === "reset") {
-    api.post(`/subscriptions/${sid}/reset-traffic`).then(() => { toast("✓", "ok"); refresh(el, true); });
+    api.post(`/subscriptions/${sid}/reset-traffic`).then(() => { toast(t("common.saved"), "ok"); refresh(el, true); });
   }
 }

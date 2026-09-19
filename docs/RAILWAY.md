@@ -32,33 +32,34 @@ and a zero-config bootstrap mode that generates strong secrets on first boot.
 4. **Generate a domain** — Settings → Networking → Generate Domain. Railway
    injects `PORT`; EMUNEL listens on it. The dashboard is served at `/`,
    the API at `/api/v1/...`, docs at `/api/docs`.
-5. **Get the initial admin password** — open *Deployments → Deploy Logs*.
-   On the **first** boot (empty database) you will see:
+5. **Sign in** — default credentials are **admin / admin** (same as the
+   reference project). Change the password in Users → admin immediately
+   after first login.
 
-   ```
-   initial admin 'admin' seeded with auto-generated password: Xy3AbC...
-   change it immediately after first login (Users -> admin), or set EMUNEL_ADMIN_PASSWORD to control it
-   ```
+## Auto-provisioned variables (zero-config, reference parity)
 
-   Log in with `admin` + that password and change it in the UI. The password
-   is printed only that once; it is not stored in plain text anywhere else.
+Deploy with an EMPTY variable list and EMUNEL provisions everything on
+first boot — the reference project's approach:
 
-## Environment variables (all optional)
-
-| Variable | Default | Notes |
+| Variable | If unset | If set |
 |---|---|---|
-| `EMUNEL_SECRET_KEY` | auto-generated | ≥32 chars; persisted in `/data/secrets.json` when unset |
-| `EMUNEL_JWT_SECRET_KEY` | auto-generated | ≥32 chars; same persistence rule |
-| `EMUNEL_ADMIN_PASSWORD` | auto-generated | ≥12 chars; printed once in logs on first seed |
-| `EMUNEL_DATABASE_URL` / `DATABASE_URL` | SQLite at `/data/emunel.db` | accepts `postgresql://`, `postgres://`, asyncpg DSNs |
-| `EMUNEL_DATA_ROOT` | `/data` (in image) | put the volume here |
-| `EMUNEL_PORT` | injected `PORT` | don't set this on Railway |
-| `EMUNEL_CORE_BIND_HOST` | `0.0.0.0` (in image) | see "Exposing proxy instances" below |
-| `EMUNEL_PORT_RANGE_START/END` | `18100`–`18999` | internal ports allocated to instances |
-| `EMUNEL_SYNC_INTERVAL` | `10` | seconds between link/traffic sync passes |
+| `EMUNEL_SECRET_KEY` | strong random value, persisted to `/data/secrets.json` (0600) — survives restarts | used as-is (weak values log CRITICAL warnings) |
+| `EMUNEL_JWT_SECRET_KEY` | same auto-generation + persistence | used as-is |
+| `DATABASE_URL` | embedded SQLite at `/data/emunel.db` | normalized (`postgresql://` → asyncpg DSN) |
+| `PORT` | Railway injects it — honored automatically | — |
+| Admin credentials | **admin / admin**, seeded on first boot, console warns to change it | `EMUNEL_ADMIN_USERNAME` / `EMUNEL_ADMIN_PASSWORD` override |
 
-Explicit values always override generated ones; weak explicit values are
-rejected at startup (fail-closed with a clear message in the logs).
+## Never-crash guarantees
+
+* **Startup never raises** on weak/missing configuration — misconfiguration
+  logs CRITICAL warnings and the container keeps serving (crash-looping
+  helps no one).
+* **Database outages degrade, not kill**: if Postgres is still provisioning,
+  connection attempts retry (10s connect timeout, ~30 attempts); if it stays
+  down, the app serves `/health` 200, `/ready` false, and a background task
+  retries every 15s until it recovers. The container never crash-loops.
+* **Instance manager / link-sync failures** are contained to their
+  subsystems — the rest of the console keeps working.
 
 ## Exposing proxy instances on Railway
 

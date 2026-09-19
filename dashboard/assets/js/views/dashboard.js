@@ -3,6 +3,7 @@ import { api, fmtBytes, esc } from "../api.js";
 import { t } from "../i18n.js";
 import { loading, emptyState, statusBadge, lineChart } from "../components.js";
 import { poller } from "../app.js";
+import { icon } from "../icons.js";
 
 export async function mount(el) {
   el.innerHTML = loading();
@@ -30,8 +31,8 @@ async function refresh(el, first) {
   const totalNow = conn.total_connections || 0;
 
   el.innerHTML = `
-    ${degraded ? `<div class="card" style="border-color:rgba(251,191,36,.35);margin-bottom:14px">
-      <span style="color:var(--warn)">⚠ ${t("dash.degradedNote")}</span></div>` : ""}
+    ${degraded ? `<div class="card" style="border-color:rgba(227,179,65,.4);margin-bottom:14px;display:flex;gap:10px;align-items:center">
+      <span style="color:var(--amber)">${icon("alert", 16)}</span><span>${t("dash.degradedNote")}</span></div>` : ""}
     <div class="grid cols-4">
       <div class="card stat-card">
         <div class="stat-value" id="st-traffic">${fmtBytes(overview.traffic_total_bytes)}</div>

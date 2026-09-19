@@ -39,7 +39,8 @@ EMUNEL adds the management layer on top.
   xHTTP probes with labelled latency types, on-demand, rate limited.
 - **Health system** — liveness, readiness, database, instances, manager, sync
   reported independently; failures degrade, never cascade.
-- **UI** — dark glass design (restrained blur), EN + فارسی with full RTL,
+- **UI** — dark technical design system (SVG iconography, grouped nav,
+  mono numerals, pulsing status dots), EN + فارسی with full RTL,
   mobile-first responsive, PWA manifest, no build step, no framework.
 - **Security** — JWT auth, RBAC, bcrypt (with >72-byte pre-hashing), startup
   secret validation, secret redaction in every Core log, tokens never in API
@@ -53,9 +54,10 @@ cd EMUNEL
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-With no `EMUNEL_*` secrets configured, strong ones are generated on first
-boot and persisted under the data volume; the initial admin password is
-printed once in the logs. Or set them explicitly via `.env`
+Fully zero-config (reference parity): strong secrets are auto-provisioned
+on first boot and persisted under the data volume, and the console is
+reachable with the default **admin / admin** account — change the password
+right after first login. Or set variables explicitly via `.env`
 (`cp .env.example .env`).
 
 **Railway:** deploy the GitHub repo directly — the root `Dockerfile` +

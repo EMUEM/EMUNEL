@@ -3,6 +3,7 @@ import { api, fmtBytes, fmtDate, esc } from "../api.js";
 import { t } from "../i18n.js";
 import { toast, modal, loading, emptyState, statusBadge } from "../components.js";
 import { poller } from "../app.js";
+import { icon } from "../icons.js";
 
 let currentEl = null;
 
@@ -70,11 +71,11 @@ function instanceCard(i, matrix) {
              <button class="btn small" data-act="share">${t("inst.shareLinks")}</button>`
           : `<button class="btn small primary" data-act="start">${t("inst.start")}</button>
              <button class="btn small" data-act="links">${t("inst.links")}</button>`}
-        <button class="btn small danger" data-act="delete">✕</button>
+        <button class="btn small danger" data-act="delete" title="${t("common.delete")}" aria-label="${t("common.delete")}">${icon("close", 13)}</button>
       </div>
     </div>
     <div class="muted" style="font-size:12px;margin-top:6px">
-      ${i.live?.healthy ? `● ${i.live.core_health?.connections ?? 0} ${t("inst.connections").toLowerCase()} · up ${i.live.core_health?.uptime ?? 0}s`
+      ${i.live?.healthy ? `<span class="pass">${icon("check", 12)}</span> ${i.live.core_health?.connections ?? 0} ${t("inst.connections").toLowerCase()} · up ${i.live.core_health?.uptime ?? 0}s`
         : i.last_error ? esc(i.last_error) : ""}
       ${i.link_count != null ? ` · ${i.link_count} ${t("inst.links").toLowerCase()}` : ""}
     </div>
@@ -95,13 +96,13 @@ function wireCards(el, matrix) {
       await api.post(`/instances/${id}/start`); toast(t("common.running"), "ok"); rerender();
     });
     card.querySelector('[data-act="restart"]')?.addEventListener("click", async () => {
-      await api.post(`/instances/${id}/restart`); toast(t("inst.restart") + " ✓", "ok");
+      await api.post(`/instances/${id}/restart`); toast(t("inst.restarted"), "ok");
     });
     card.querySelector('[data-act="delete"]')?.addEventListener("click", () => {
       modal(`${t("common.delete")} — ${t("inst.title")}`, `<p>${t("common.confirm")}?</p>`, [
         { label: t("common.cancel") },
         { label: t("common.delete"), kind: "danger", onClick: async (_b, close) => {
-            await api.del(`/instances/${id}`); close(); toast(t("common.delete") + " ✓", "ok"); rerender();
+            await api.del(`/instances/${id}`); close(); toast(t("common.deleted"), "ok"); rerender();
           } },
       ]);
     });
@@ -168,7 +169,7 @@ async function linksDialog(id, card, matrix) {
       <td style="white-space:nowrap">
         <button class="btn small" data-lact="revoke" data-lid="${esc(l.id)}">${t("subs.revoke")}</button>
         <button class="btn small" data-lact="reset" data-lid="${esc(l.id)}">${t("subs.resetTraffic")}</button>
-        <button class="btn small danger" data-lact="del" data-lid="${esc(l.id)}">✕</button>
+        <button class="btn small danger" data-lact="del" data-lid="${esc(l.id)}" title="${t("common.delete")}" aria-label="${t("common.delete")}">${icon("close", 13)}</button>
       </td>
     </tr>`).join("");
 

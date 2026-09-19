@@ -74,7 +74,7 @@ async function runTest(el, kind) {
 
 function renderProbe(p) {
   const rows = [
-    ["✓/✕", p.ok ? "✓" : "✕"],
+    ["result", p.ok ? "pass" : "fail"],
     [t("diag.latency"), fmtMs(p.latency_ms)],
     ...Object.entries(p.detail || {}).map(([k, v]) => [k, esc(typeof v === "object" ? JSON.stringify(v) : v)]),
   ];
@@ -98,7 +98,7 @@ function renderChain(res) {
         ${(res.stages || []).map((s) => `
           <tr>
             <td><b>${esc(stageName[s.name] || s.name)}</b></td>
-            <td>${s.ok ? "✓" : "✕"}</td>
+            <td>${s.ok ? '<span class="pass">pass</span>' : '<span class="fail">fail</span>'}</td>
             <td class="mono">${fmtMs(s.latency_ms)}</td>
             <td class="muted" style="font-size:12px">${esc(s.error || brief(s))}</td>
           </tr>`).join("")}
