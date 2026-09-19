@@ -1,12 +1,17 @@
-# EMUNEL — unified service requirements (API + Core runtimes share this env:
-# the InstanceManager spawns Core subprocesses with the same interpreter).
+# EMUNEL — unified service requirements (single source of truth).
+#
+# The API and every Core instance subprocess share this environment:
+# the InstanceManager spawns Core subprocesses with the same interpreter.
+# NOTE: this file is a strict SUPERSET of core/requirements.txt (which is
+# kept only for standalone Core usage); keep the pins compatible when
+# editing either file.
 
-# --- shared runtime ---
-fastapi>=0.110
+# --- shared runtime (API + Core) ---
+fastapi>=0.141
 uvicorn[standard]>=0.30
 websockets>=12.0
-cryptography>=42.0
-psutil>=5.9
+cryptography>=42.0.0
+psutil>=5.9.0
 httpx>=0.26
 
 # --- console API ---

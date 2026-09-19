@@ -8,6 +8,7 @@ and a zero-config bootstrap mode that generates strong secrets on first boot.
 
 | Problem | Symptom in Railway logs | Fix |
 |---|---|---|
+| Requirements collision in Dockerfile | Build succeeds but runtime crash-loops: `ModuleNotFoundError: No module named 'sqlalchemy'` (while `import fastapi` works) — `COPY requirements.txt core/requirements.txt ./` flattened both same-named files and core's 5 packages silently overwrote the root list | Dockerfile now installs from the single root `requirements.txt` (a strict superset) and a build-time import check fails the build loudly if any critical package is missing |
 | Dockerfile `VOLUME` instruction | `dockerfile invalid: docker VOLUME at Line 49 is not supported, use Railway Volumes` → build fails instantly | Removed from the Dockerfile — attach a Railway volume at `/data` instead |
 | Secrets required at boot | `RuntimeError: EMUNEL_SECRET_KEY and JWT_SECRET_KEY must be replaced before production startup` → `Application startup failed. Exiting.` | Secrets are now **auto-generated** (persisted under `/data`) when not provided via env vars |
 | Port mismatch | App listening on `8000`, Railway routing to injected `PORT` → connection refused / "port not detected" | `main.py` honors the injected `PORT` (`EMUNEL_PORT` still wins if set) |
