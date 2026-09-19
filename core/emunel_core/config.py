@@ -24,6 +24,8 @@ class CoreConfig:
 
     # Database URL for quota lookups
     database_url: str = "sqlite+aiosqlite:///./emunel.db"
+    # Fail closed unless the control plane has explicitly loaded credentials.
+    require_registered_credentials: bool = True
 
     @classmethod
     def from_env(cls) -> "CoreConfig":
@@ -40,4 +42,7 @@ class CoreConfig:
             database_url=os.getenv(
                 "DATABASE_URL", "sqlite+aiosqlite:///./emunel.db"
             ),
+            require_registered_credentials=os.getenv(
+                "CORE_REQUIRE_REGISTERED_CREDENTIALS", "true"
+            ).lower() in {"1", "true", "yes", "on"},
         )

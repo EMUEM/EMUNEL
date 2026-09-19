@@ -24,6 +24,7 @@ class ProxyServer:
         self.links = LinkManager(config)
         self.quota = QuotaManager(config)
         self._server: Optional[asyncio.AbstractServer] = None
+        self._connection_slots = asyncio.Semaphore(max(1, config.max_connections))
 
     async def start(self) -> None:
         """Start the proxy server."""
@@ -63,6 +64,13 @@ class ProxyServer:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         """Route incoming connection to the appropriate protocol handler."""
+        if not self._connection_slots.locked():
+            await self._connection_slots.acquire()
+        else:
+            logger.warning("Connection limit reached; rejecting peer")
+            writer.close()
+            await writer.wait_closed()
+            return
         peer = writer.get_extra_info("peername")
         conn_id = self.state.register(peer)
         logger.debug("New connection %s from %s", conn_id, peer)
@@ -100,6 +108,7 @@ class ProxyServer:
             logger.error("Error handling connection %s: %s", conn_id, exc)
         finally:
             self.state.unregister(conn_id)
+            self._connection_slots.release()
             writer.close()
             try:
                 await writer.wait_closed()

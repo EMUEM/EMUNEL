@@ -26,6 +26,7 @@ from .routers.v1 import (
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan: startup and shutdown."""
+    settings.validate_runtime()
     await init_db()
     yield
 
