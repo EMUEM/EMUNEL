@@ -186,7 +186,7 @@ function esc(s){var d=document.createElement("div");d.textContent=s==null?"":Str
 function toast(msg,kind,ms){var w=$(".tw");if(!w){w=document.createElement("div");w.className="tw";document.body.appendChild(w)}
 var e=document.createElement("div");e.className="to "+(kind||"");e.textContent=msg;w.appendChild(e);setTimeout(function(){e.remove()},ms||3500)}
 function fmtBytes(n){if(n==null)return"—";if(n<1024)return n+" B";if(n<1048576)return(n/1024).toFixed(1)+" KB";if(n<1073741824)return(n/1048576).toFixed(2)+" MB";return(n/1073741824).toFixed(2)+" GB"}
-function fmtUp(s){if(s==null)return"—";var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);if(d>0)return d+"d "+h+"h";if(h>0)return h+"h "+m+"m";if(m>0)return m+"m "+s+"s";return s+"s"}
+function fmtUp(s){if(s==null)return"—";var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);if(d>0)return d+"d "+h+"h";if(h>0)return h+"h "+m+"m";if(m>0)return m+"m "+(s%60)+"s";return s+"s"}
 function ago(iso){if(!iso)return"—";var t=new Date(iso),df=(Date.now()-t.getTime())/1e3;if(df<60)return"just now";if(df<3600)return Math.floor(df/60)+"m ago";if(df<86400)return Math.floor(df/3600)+"h ago";return t.toLocaleDateString(undefined,{month:"short",day:"numeric"})}
 function dur(ms){if(ms==null)return"—";if(ms<1e3)return ms+"ms";if(ms<6e4)return(ms/1e3).toFixed(1)+"s";return Math.floor(ms/6e4)+"m"}
 var LBL={queued:"Queued",preparing:"Preparing",building:"Building",starting:"Starting",health_check:"Health check",running:"Running",failed:"Failed",stopping:"Stopping",stopped:"Stopped",deleted:"Deleted",online:"Running",offline:"Stopped",unknown:"—"};
@@ -235,7 +235,7 @@ var MARK='<svg class="bm" viewBox="0 0 32 32" fill="none">'+MARK_IN+"</svg>";
 var MARK_L='<svg viewBox="0 0 32 32" fill="none">'+MARK_IN+"</svg>";
 
 // ───────────────────────────── shell/state ─────────────────────────────
-var USER=null, cleanup=null, pollTimer=null, LINKS={github:"https://github.com/mehialadi-star/EMUNEL",telegram:""}, BUILD_STAMP="__EMUNEL_BUILD__";
+var USER=null, cleanup=null, pollTimer=null, LINKS={github:"https://github.com/EMUEM/EMUNEL",telegram:""}, BUILD_STAMP="__EMUNEL_BUILD__";
 function setCleanup(fn){if(cleanup)cleanup();cleanup=fn||null}
 function stopPoll(){if(pollTimer){if(pollTimer.stop)pollTimer.stop();else clearInterval(pollTimer);pollTimer=null}}
 // Resilient polling: skips overlapping runs, pauses while the tab is hidden

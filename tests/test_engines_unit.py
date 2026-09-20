@@ -116,7 +116,11 @@ def test_circuit_breaker_opens_after_errors():
     assert not breaker.open()                   # counts restarted from zero
 
 
-def test_state_store_roundtrip_and_volume_probe(tmp_path):
+def test_state_store_roundtrip_and_volume_probe(tmp_path, monkeypatch):
+    # ensure the Railway detection below is deterministic
+    for k in list(os.environ):
+        if k.startswith("RAILWAY_"):
+            monkeypatch.delenv(k, raising=False)
     first = EngineStateStore(str(tmp_path / "vol"))
     first.set("Morph", {"chosen": {"mci": "video"}})
     first.maybe_flush(force=True)
@@ -124,20 +128,27 @@ def test_state_store_roundtrip_and_volume_probe(tmp_path):
     second = EngineStateStore(str(tmp_path / "vol"))
     second.load()
     assert second.get("Morph").get("chosen") == {"mci": "video"}
-    # volume warning: token was written by `first`, `second` wrote a new one —
-    # a THIRD run after "losing" the file must warn
-    (tmp_path / "vol" / ".engine-volume-probe").unlink()
+    # a probe token from the previous run survived the restart → NO warning,
+    # even though the freshly generated token differs (value is irrelevant)
+    assert second.volume_warning is None
     third = EngineStateStore(str(tmp_path / "vol"))
-    assert third.volume_warning is None  # missing file = first boot, not data loss
-    third.set("X", {})
-    third.maybe_flush(force=True)
-    EngineStateStore(str(tmp_path / "vol"))  # writes yet another token
-    fourth = EngineStateStore(str(tmp_path / "vol"))
-    # simulate persistence loss: overwrite the token with a foreign value
+    assert third.volume_warning is None
+    # a foreign token written by an earlier generation is still a surviving
+    # probe → persisted storage → no warning
     (tmp_path / "vol" / ".engine-volume-probe").write_text("stale-token")
-    fifth = EngineStateStore(str(tmp_path / "vol"))
-    assert fifth.volume_warning and "Railway volume" in fifth.volume_warning
-    assert fourth is not None
+    fourth = EngineStateStore(str(tmp_path / "vol"))
+    assert fourth.volume_warning is None
+    # first boot with NO probe on non-Railway storage → silent (dev machine)
+    fresh = tmp_path / "fresh-vol"
+    EngineStateStore(str(fresh))
+    again = EngineStateStore(str(fresh))
+    assert again.volume_warning is None
+    # first boot with NO probe while running on Railway WITHOUT a /data
+    # volume → the ephemeral-filesystem advisory fires
+    monkeypatch.setenv("RAILWAY_SERVICE_ID", "abc123")
+    raily = EngineStateStore(str(tmp_path / "railway-novol"))
+    assert raily.volume_warning and "ephemeral" in raily.volume_warning
+    assert "Railway volume" in raily.volume_warning
 
 
 # ── Coalesce ─────────────────────────────────────────────────────────────────

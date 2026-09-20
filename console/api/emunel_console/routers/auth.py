@@ -161,7 +161,7 @@ async def me(request: Request):
         },
         "csrf_token": sessions.csrf_token(request),
         "links": {
-            "github": "https://github.com/mehialadi-star/EMUNEL",
+            "github": "https://github.com/EMUEM/EMUNEL",
             "telegram": settings.telegram_channel or "",
         },
     }

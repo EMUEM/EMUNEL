@@ -6,10 +6,12 @@ point. Writes are atomic (tmp + rename) and debounced exactly like the
 Core's StateStore, so a crash never leaves a half-written file.
 
 Volume probe: on boot we look for the probe file written by the previous
-run. A missing/mismatched token means the directory did not survive the
-previous shutdown — the manager logs a loud warning telling the operator
-to attach a Railway volume at /data (this is *storage* persistence, and is
-completely separate from user traffic quotas).
+run. A surviving token means the directory persisted across the restart —
+no warning. On Railway WITHOUT a volume mounted at /data the filesystem
+is ephemeral, so a *first* boot there (no probe) means engine state will
+reset on every redeploy — the manager logs a loud warning telling the
+operator to attach a Railway volume at /data (this is *storage*
+persistence, and is completely separate from user traffic quotas).
 """
 from __future__ import annotations
 
@@ -44,7 +46,12 @@ class EngineStateStore:
 
     # ---- volume probe --------------------------------------------------------
     def _volume_probe(self) -> str | None:
-        """Detect that data did NOT persist across the previous run."""
+        """Detect non-persistent engine storage. Any probe token left by a
+        previous run proves the directory survived the restart — the token's
+        VALUE is irrelevant (it changes every boot by design), only its
+        presence matters. A missing probe means a first boot on this storage;
+        on Railway without a /data volume that storage is ephemeral, which
+        deserves the volume-attach advisory. Everywhere else: silent."""
         probe = self.dir / PROBE_FILE
         token = secrets.token_urlsafe(16)
         try:
@@ -55,16 +62,21 @@ class EngineStateStore:
             probe.write_text(token, encoding="utf-8")
         except OSError:
             pass
-        if previous == "":
-            return None                      # first boot ever: nothing to warn about
-        if previous != token:
+        if previous:
+            # A probe written by a previous run is still here: the directory
+            # persisted across the restart. No warning.
+            return None
+        on_railway = any(k.startswith("RAILWAY_") for k in os.environ)
+        on_volume = str(self.dir).startswith("/data")
+        if on_railway and not on_volume:
             return (
                 "engine data at "
-                f"{self.dir} did not persist from the previous run — engine state "
-                "resets on every redeploy. Attach a Railway volume mounted at "
-                "/data (Settings -> Volumes) so engine state, learned ISP "
-                "profiles and logs survive restarts. This is storage "
-                "persistence only and is unrelated to user traffic quotas."
+                f"{self.dir} sits on the container's ephemeral filesystem — engine "
+                "state resets on every redeploy. Attach a Railway volume "
+                "mounted at /data (Settings -> Volumes) so engine state, "
+                "learned ISP profiles and logs survive restarts. This is "
+                "storage persistence only and is unrelated to user traffic "
+                "quotas."
             )
         return None
 
