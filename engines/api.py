@@ -102,6 +102,7 @@ def build_router(manager) -> APIRouter:
 
     @router.get("/logs")
     async def engines_logs(request: Request, name: str = "", limit: int = 80, _=None):
+        await _admin(request)
         if not name:
             return {"logs": []}
         limit = max(1, min(limit, 300))

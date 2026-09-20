@@ -50,7 +50,8 @@ async def panel_home():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "EMUNEL Console", "version": version.version()}
+    return {"status": "ok", "service": "EMUNEL Console",
+            "version": version.version(), "build": version.build()}
 
 
 @app.get("/ready")
@@ -88,7 +89,7 @@ async def lifespan(_app):
         volume_task = asyncio.create_task(enforcement_loop(_db.db))
     except Exception as exc:  # never block startup
         log.warning("volume enforcement loop not started: %s", exc)
-    log.info("EMUNEL Console %s started", version.version())
+    log.info("EMUNEL Console %s (build %s) started", version.version(), version.build())
     yield
     if volume_task is not None:
         volume_task.cancel()

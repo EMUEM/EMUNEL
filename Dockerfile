@@ -17,6 +17,10 @@ COPY console/ ./console/
 COPY worker/ ./worker/
 COPY engines/ ./engines/
 
+# Build stamp — /health, /version and the panel sidebar show it so a stale
+# deployment is recognizable at a glance.
+RUN date -u "+%Y-%m-%dT%H:%MZ" > /app/.emunel_build
+
 # ── runtime user + writable data dir (persistent volume mount point) ─────────
 RUN useradd --uid 65532 --shell /usr/sbin/nologin emunel \
  && mkdir -p /data /data/instances \

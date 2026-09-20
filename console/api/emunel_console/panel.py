@@ -218,6 +218,7 @@ function api(method,path,body,retry){
 function ic(n){var p={dash:'<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/>',
 plus:'<path d="M12 5v14M5 12h14"/>',gear:'<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/>',
 menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
+eng:'<path d="M3 12h3.5l2.5-7 4 14 2.5-7H21"/>',
 vol:'<path d="M12 3v18M8 7v10M16 7v10M20 10v4M4 10v4"/>',
 gh:'<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" fill="currentColor" stroke="none"/>',
 tg:'<path d="M21.9 4.6 18.9 19c-.2 1-.8 1.2-1.7.8l-4.6-3.4-2.2 2.1c-.3.3-.5.5-1 .5l.4-4.7L18.6 6c.4-.3-.1-.5-.6-.2L7.3 12.4l-4.3-1.4c-.9-.3-.9-.9.2-1.3L20.7 3.3c.8-.3 1.5.2 1.2 1.3Z" fill="currentColor" stroke="none"/>'};
@@ -227,7 +228,7 @@ var MARK='<svg class="bm" viewBox="0 0 32 32" fill="none">'+MARK_IN+"</svg>";
 var MARK_L='<svg viewBox="0 0 32 32" fill="none">'+MARK_IN+"</svg>";
 
 // ───────────────────────────── shell/state ─────────────────────────────
-var USER=null, cleanup=null, pollTimer=null, LINKS={github:"https://github.com/mehialadi-star/EMUNEL",telegram:""};
+var USER=null, cleanup=null, pollTimer=null, LINKS={github:"https://github.com/mehialadi-star/EMUNEL",telegram:""}, BUILD_STAMP="__EMUNEL_BUILD__";
 function setCleanup(fn){if(cleanup)cleanup();cleanup=fn||null}
 function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}if(hiddenTimer){clearInterval(hiddenTimer);hiddenTimer=null}}
 var hiddenTimer=null;
@@ -239,10 +240,12 @@ function shell(nav){
     '<div class="brand">'+MARK+'<div><div class="bn">EMUNEL</div><div style="font-size:10px;color:var(--fnt);letter-spacing:1.2px">CONSOLE</div></div></div>'+
     '<button class="ni '+(nav==="dash"?"act":"")+'" data-nav="dash">'+ic("dash")+' Dashboard</button>'+
     '<button class="ni '+(nav==="new"?"act":"")+'" data-nav="new">'+ic("plus")+' Create Instance</button>'+
-    (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+' Admin</button>':"")+
+    (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+' Admin</button>'+
+      '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+' Engines</button>':"")+
     (LINKS.github?'<a class="ni" href="'+LINKS.github+'" target="_blank" rel="noopener">'+ic("gh")+' GitHub</a>':"")+
     (LINKS.telegram?'<a class="ni" href="'+esc(LINKS.telegram)+'" target="_blank" rel="noopener">'+ic("tg")+' Telegram</a>':"")+
     '<div style="padding:6px 8px"><span class="free"><span class="fdot"></span>Free</span></div>'+
+    '<div style="padding:0 8px 8px"><span class="ftx mono" style="font-size:9.5px;letter-spacing:.4px">build '+BUILD_STAMP+"</span></div>"+
     '<div class="sbft"><div class="who"><b>'+esc(USER.name||USER.login)+'</b><span>@'+esc(USER.login)+'</span></div>'+
     '<button class="btn sm" style="margin-left:auto" id="lg">Sign out</button></div></aside>'+
     '<div class="main"><div class="topbar">'+MARK+'<b style="font-size:14px">EMUNEL</b>'+
@@ -251,7 +254,8 @@ function shell(nav){
     '<div class="ct" id="view"></div>'+
     '<nav class="bnav"><button class="ni '+(nav==="dash"?"act":"")+'" data-nav="dash">'+ic("dash")+'<span>Home</span></button>'+
     '<button class="ni '+(nav==="new"?"act":"")+'" data-nav="new">'+ic("plus")+'<span>Create</span></button>'+
-    (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+'<span>Admin</span></button>':"")+
+    (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+'<span>Admin</span></button>'+
+      '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+'<span>Engines</span></button>':"")+
     '</nav></div></div>';
   var lg=$("#lg");if(lg)lg.onclick=logout;
   var lgm=$("#lgm");if(lgm)lgm.onclick=logout;
@@ -264,7 +268,7 @@ function shell(nav){
     b.onclick=function(){window.__closeDrawer();nav_(b.dataset.nav)}});
 }
 function nav_(name){stopPoll();setCleanup(null);
-  if(name==="dash")viewDash();else if(name==="new")viewWizard();else if(name==="admin")viewAdmin()}
+  if(name==="dash")viewDash();else if(name==="new")viewWizard();else if(name==="engines")viewEngines();else if(name==="admin")viewAdmin()}
 function logout(){api("POST","/auth/logout").then(function(){render()})}
 function closeDrawer(){var w=window.__closeDrawer;if(w)w()}
 // ───────────────────────────── login ─────────────────────────────
@@ -772,6 +776,92 @@ function viewAdmin(){
   }
   stats();rebuild();
 }
+// ───────────────────────────── engines ─────────────────────────────
+function viewEngines(){
+  shell("engines");
+  var v=$("#view");
+  v.innerHTML='<div class="ph"><div><h1>Engine Settings</h1>'+
+    '<div class="sub">Traffic engines — a plugin layer over the gateway hop, subscription feeds and Core dials. The proxy Core itself is never modified.</div></div>'+
+    '<div class="ha"><button class="btn sm" id="eg-st">Run selftest</button><button class="btn sm pri" id="eg-rf">Refresh</button></div></div>'+
+    '<div id="eg-w"></div><div class="sgs" id="eg-s"></div><div class="ig" id="eg-c"></div><div class="card" style="margin-top:16px" id="eg-k"></div>';
+  function egSg(l,val,c){var s=String(val);
+    return '<div class="sg"><div class="l">'+l+'</div><div class="v" style="font-size:'+(s.length>18?"13px":"18px")+';'+(c?"color:"+c:"")+'">'+esc(s)+"</div></div>"}
+  function egChip(e){
+    if(e.active)return '<span class="chip" style="color:var(--grn);border-color:var(--grn)">Active</span>';
+    if(e.reason&&e.reason.indexOf("disabled by env")===0)return '<span class="chip" style="color:var(--red);border-color:var(--red)">Env-off</span>';
+    if(e.reason&&e.reason.indexOf("disabled by operator")===0)return '<span class="chip" style="color:var(--amb);border-color:var(--amb)">Off</span>';
+    return '<span class="chip">Inactive</span>'}
+  function egKv(o,max){
+    var ks=Object.keys(o||{}).slice(0,max||6);
+    if(!ks.length)return "";
+    return '<div class="kv" style="margin-top:6px">'+ks.map(function(k){
+      var val=String(o[k]);if(val.length>34)val=val.slice(0,33)+"...";
+      return '<div class="it" style="padding:6px 9px"><div class="k" style="font-size:10.5px">'+esc(k)+'</div><div class="v mono" style="font-size:11px">'+esc(val)+"</div></div>"}).join("")+"</div>"}
+  function egCard(e){
+    return '<div class="card" data-en="'+esc(e.name)+'">'+
+      '<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px"><div><b>'+esc(e.name)+'</b>'+
+      '<div class="ftx" style="font-size:11.5px;margin-top:2px">'+esc(e.title||"")+"</div></div>"+egChip(e)+"</div>"+
+      (e.reason?'<p class="ftx" style="font-size:11.5px;margin:9px 0 0;border-left:2px solid var(--bd2);padding-left:8px">'+esc(e.reason)+"</p>":"")+
+      (Object.keys(e.params||{}).length?'<div style="margin-top:10px"><span class="ftx" style="font-size:10px;letter-spacing:1px">PARAMS</span>'+egKv(e.params,6)+"</div>":"")+
+      '<div style="border-top:1px solid var(--bd);margin-top:10px;padding-top:8px"><span class="ftx" style="font-size:10px;letter-spacing:1px">METRICS</span>'+
+      (egKv(e.metrics,6)||'<div class="ftx" style="font-size:11.5px;margin-top:5px">no activity yet</div>')+"</div>"+
+      '<div class="row" style="gap:6px;margin-top:12px"><button class="btn sm'+(e.active?"":" pri")+'" data-eg="'+(e.active?"disable":"enable")+'">'+(e.active?"Disable":"Enable")+'</button><button class="btn sm" data-eg="logs">Logs</button></div></div>'}
+  function egModal(title,body){
+    var ov=document.createElement("div");ov.className="qr-ov";
+    ov.innerHTML='<div class="qr-c" style="max-width:560px;width:92vw"><b style="font-size:13px">'+esc(title)+'</b>'+
+      '<pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:56vh;overflow:auto;font-size:11.5px;line-height:1.55;text-align:left;margin:12px 0;color:var(--dim)">'+esc(body||"—")+"</pre>"+
+      '<button class="btn sm" id="egx">Close</button></div>';
+    document.body.appendChild(ov);
+    ov.onclick=function(e){if(e.target===ov)ov.remove()};
+    $("#egx",ov).onclick=function(){ov.remove()};
+    return ov}
+  function load(){
+    api("GET","/api/engines").then(function(d){
+      var es=d.engines||[],act=0;es.forEach(function(e){if(e.active)act++});
+      $("#eg-w").innerHTML=d.volume_warning?'<div class="card" style="border-color:var(--amb);margin-bottom:14px"><h3 style="margin:0 0 6px;color:var(--amb)">Engine state is not persisting</h3><p class="mut" style="margin:0;font-size:12.5px">'+esc(d.volume_warning)+"</p></div>":"";
+      var po=(d.pipeline_order||[]).join(" → ")||"—";
+      $("#eg-s").innerHTML=egSg("Engines active",act+" / "+es.length,act?"var(--grn)":"")+egSg("Pipeline order",po)+
+        egSg("Engine data",d.data_dir||"—")+egSg("Uptime",fmtUp(Math.round(d.uptime||0)));
+      $("#eg-c").innerHTML=es.length?es.map(egCard).join(""):'<div class="card"><span class="mut">No engines registered.</span></div>';
+      var cs=d.cores||[];
+      $("#eg-k").innerHTML='<h3 style="margin:0 0 8px">Core-side engines (per running instance)</h3>'+
+        (cs.length?cs.map(function(c){
+          var on=(c.engines||[]).filter(function(e){return e.active});
+          return '<div style="padding:8px 0;border-top:1px solid var(--bd)"><b>'+esc(c.instance_name||c.instance_id)+"</b> "+
+            (on.length?on.map(function(e){return '<span class="chip">'+esc(e.name)+"</span>"}).join(" "):'<span class="ftx" style="font-size:11.5px">none active</span>')+"</div>"}).join("")
+        :'<p class="ftx" style="font-size:12px">No running instance has reported core-side engine status yet — embedded cores report through the worker proxy.</p>');
+      var cEl=$("#eg-c");
+      Array.prototype.forEach.call(cEl.querySelectorAll("[data-eg]"),function(btn){
+        btn.onclick=function(){
+          var name=btn.closest("[data-en]").dataset.en,a=btn.dataset.eg;
+          if(a==="logs"){
+            api("GET","/api/engines/logs?name="+encodeURIComponent(name)).then(function(r){
+              var ls=r.logs||[];
+              if(!ls.length){toast("No engine logs yet","ok");return}
+              egModal(name+" — recent log",ls.slice(-60).join("\n"))})
+            .catch(function(e){toast(e.message,"err")});
+            return}
+          btn.disabled=true;
+          api("POST","/api/engines/"+encodeURIComponent(name)+"/"+a).then(function(r){
+            toast(r&&r.ok?name+" "+(a==="enable"?"enabled":"disabled"):((r&&r.message)||"done"),"ok");load()})
+          .catch(function(e){btn.disabled=false;toast(e.message,"err")})}});
+    }).catch(function(e){
+      var msg=String(e.message||"");
+      $("#eg-s").innerHTML="";
+      $("#eg-c").innerHTML='<div class="card"><b>Engines unavailable</b><p class="mut" style="font-size:12.5px">'+
+        (msg.indexOf("404")>=0?"The engines layer is disabled on this deployment (EMUNEL_ENGINES_ENABLED=0). Remove that variable and redeploy to get this page back.":esc(msg))+"</p></div>";
+      $("#eg-k").innerHTML=""});
+  }
+  $("#eg-rf").onclick=load;
+  $("#eg-st").onclick=function(){
+    var b=$("#eg-st");b.disabled=true;
+    api("POST","/api/engines/selftest").then(function(r){
+      b.disabled=false;
+      egModal("Engine selftest — "+(r&&r.all_ok?"all checks passed":"review results"),JSON.stringify(r,null,2))})
+    .catch(function(e){b.disabled=false;toast(e.message,"err")})};
+  load();
+  pollTimer=every(20000,load);
+}
 // ───────────────────────────── boot ─────────────────────────────
 function render(){
   api("GET","/auth/me").then(function(me){
@@ -789,5 +879,16 @@ render();
 </body>
 </html>
 """
+
+def _build_stamp() -> str:
+    """Deployment build identifier baked into the served page."""
+    import re
+
+    from .version import build as _build
+
+    return re.sub(r"[^A-Za-z0-9 .:+_-]", "", _build())[:48] or "dev"
+
+
+PAGE = PAGE.replace("__EMUNEL_BUILD__", _build_stamp())
 
 router.add_api_route("/panel", lambda: HTMLResponse(PAGE), methods=["GET"], include_in_schema=False)
