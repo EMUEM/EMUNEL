@@ -91,3 +91,58 @@ docker run -d -p 8080:8080 -v emunel-data:/data emunel
 ```
 
 Or with compose: `docker compose -f deploy/docker/docker-compose.yml up -d`.
+
+## Engines — deploy guide (traffic plugin layer)
+
+The engines layer ships enabled with a conservative, real-by-default
+pipeline: **Coalesce** (downlink frame merging), **PreConnect** + **Congestion**
+(inside each Core), **SessionResumption**, **FakeHandshake** (probe defense),
+**SplitTunnel** (Iran direct rules in singbox/clash feeds). Engines that need
+operator assets (Morph profiles, SNI domains, fronting edge, extra ports)
+stay inactive and SAY WHY on the panel.
+
+### 1. Volume (do this once)
+
+Engine state — learned ISP profiles (LinUCB models), rotation counters,
+logs — lives in `/data/engines`:
+
+```
+Railway project → your EMUNEL service → Settings → Volumes
+  Mount path: /data
+```
+
+Without a volume the platform still works, but engine learning resets on
+every redeploy and the panel shows a warning banner. This is STORAGE
+persistence only — it is not related to user traffic quotas.
+
+### 2. Environment variables
+
+All engine variables are optional (documented in `.env.example` and
+`engines/README.md`). The ones worth setting first:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `EMUNEL_ENGINES_ENABLED` | `1` | `0` = bit-for-bit pre-engine behaviour |
+| `EMUNEL_ENGINE_MORPH_ENABLED` | `0` | turn on the morphing/bandit engine |
+| `EMUNEL_MORPH_PROFILES` | built-ins | per-ISP shaping profiles (JSON) |
+| `EMUNEL_SNI_DOMAINS` | — | ≥2 domains attached to the service → enables SNI rotation |
+| `EMUNEL_FAKE_SERVER_TYPE` | `nginx` | probe-page flavour (`nginx`/`apache`) |
+| `EMUNEL_SPLIT_DOMAINS` | bundled Iran list | direct-routing domain list |
+
+### 3. Start command
+
+Unchanged: `python main.py` (the `railway.json` build/deploy config needs no
+edit). The worker automatically launches instance Cores through
+`engines.core_host` whenever a core-side engine is active — with all of them
+off it launches the plain `emunel_core` exactly as before.
+
+### 4. Verify after deploy
+
+* Panel → **Engine Settings** (admin): every engine shows Active/Inactive
+  with a reason, params, metrics; hot Enable/Disable works without a restart.
+* `GET /health` stays `200`; the panel loads unchanged.
+* A `curl -A curl/8 $APP_URL/random-path` returns an nginx-style 404 (probe
+  defense), while a browser still gets the panel.
+* Subscription feeds: `?fmt=singbox` contains the `emunel-direct` route
+  rules; `?fmt=clash` contains `DOMAIN-SUFFIX,ir,DIRECT`.
+* CLI (local clone): `python engine_manager.py doctor && python engine_manager.py selftest`.
