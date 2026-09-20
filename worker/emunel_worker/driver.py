@@ -253,9 +253,12 @@ class ProcessDriver(BaseDriver):
         super().__init__(ports, data_root)
         # Default: run Core with its own venv so its dependencies (cryptography
         # etc.) resolve independently of the worker's environment.
+        # EMUNEL_CORE_MODULE lets the engines layer substitute its host wrapper
+        # (engines.core_host — Core still runs verbatim inside it); unset the
+        # value stays "emunel_core", the exact previous behaviour.
         self.core_cmd = core_cmd or [
             os.environ.get("EMUNEL_CORE_PYTHON", ".venv/bin/python"),
-            "-m", "emunel_core",
+            "-m", os.environ.get("EMUNEL_CORE_MODULE", "emunel_core"),
         ]
         self.core_cwd = os.environ.get("EMUNEL_CORE_CWD", "")
 
@@ -295,6 +298,15 @@ class ProcessDriver(BaseDriver):
             "PORT": str(port),
         })
         env.pop("PYTHONPATH", None)  # never leak worker deps into Core
+        # Engines: when Core is launched through the engines host it needs the
+        # repo root on sys.path to import the engines package — and nothing
+        # else (no worker deps leak; the engines layer is part of the app).
+        if os.environ.get("EMUNEL_CORE_MODULE", "emunel_core") != "emunel_core":
+            engines_root = os.environ.get("EMUNEL_ENGINES_ROOT", "")
+            if not engines_root and self.core_cwd:
+                engines_root = str(Path(self.core_cwd).resolve().parent)
+            if engines_root:
+                env["PYTHONPATH"] = engines_root
 
         out_path = data_dir / "core.log"
         out_fh = out_path.open("ab", buffering=0)

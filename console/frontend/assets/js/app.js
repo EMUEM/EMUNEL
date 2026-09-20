@@ -3,6 +3,7 @@ import dashboard from "./views/dashboard.js";
 import wizard from "./views/wizard.js";
 import instance from "./views/instance.js";
 import admin from "./views/admin.js";
+import engines from "./views/engines.js";
 import { requireAuth } from "./views/login.js";
 import mark from "./mark.js";
 
@@ -13,6 +14,7 @@ const routes = [
   { path: /^\/instances\/new$/, view: wizard, nav: "new" },
   { path: /^\/instances\/([0-9a-f-]{36})$/, view: instance, nav: "dashboard" },
   { path: /^\/admin$/, view: admin, nav: "admin", adminOnly: true },
+  { path: /^\/engines$/, view: engines, nav: "engines", adminOnly: true },
 ];
 
 function icons(name) {
@@ -21,6 +23,7 @@ function icons(name) {
     instances: `<rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/>`,
     plus: `<path d="M12 5v14M5 12h14"/>`,
     admin: `<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/>`,
+    engines: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>`,
   };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name]}</svg>`;
 }
@@ -37,7 +40,7 @@ function renderShell(nav) {
       </div>
       <a class="nav-item ${nav === "dashboard" ? "active" : ""}" href="#/" data-nav="dashboard">${icons("dashboard")} Dashboard</a>
       <a class="nav-item ${nav === "new" ? "active" : ""}" href="#/instances/new" data-nav="new">${icons("plus")} Create Instance</a>
-      ${u.is_admin ? `<div class="nav-sep"></div><a class="nav-item ${nav === "admin" ? "active" : ""}" href="#/admin" data-nav="admin">${icons("admin")} Admin</a>` : ""}
+      ${u.is_admin ? `<div class="nav-sep"></div><a class="nav-item ${nav === "admin" ? "active" : ""}" href="#/admin" data-nav="admin">${icons("admin")} Admin</a><a class="nav-item ${nav === "engines" ? "active" : ""}" href="#/engines" data-nav="engines">${icons("engines")} Engines</a>` : ""}
       <div class="sidebar-footer">
         ${u.avatar_url ? `<img src="${u.avatar_url}" alt="" referrerpolicy="no-referrer">` : ""}
         <div class="who"><div class="name">${u.name || u.login}</div><div class="sub">@${u.login}</div></div>
@@ -56,7 +59,7 @@ function renderShell(nav) {
       <nav class="bottomnav">
         <a href="#/" data-nav="dashboard">${icons("dashboard")}<span>Dashboard</span></a>
         <a href="#/instances/new" data-nav="new">${icons("plus")}<span>Create</span></a>
-        ${u.is_admin ? `<a href="#/admin" data-nav="admin">${icons("admin")}<span>Admin</span></a>` : ""}
+        ${u.is_admin ? `<a href="#/admin" data-nav="admin">${icons("admin")}<span>Admin</span></a><a href="#/engines" data-nav="engines">${icons("engines")}<span>Engines</span></a>` : ""}
       </nav>
     </div>
   </div>`;

@@ -11,10 +11,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
  && python -c "import sys, importlib.util; critical = ['fastapi','uvicorn','asyncpg','httpx','websockets','cryptography','psutil','aiosqlite','qrcode']; missing = [m for m in critical if importlib.util.find_spec(m) is None]; sys.exit('FATAL missing packages: ' + ', '.join(missing)) if missing else print('dependency check OK — %d critical packages importable' % len(critical))"
 
 # ── application code ─────────────────────────────────────────────────────────
-COPY main.py ./
+COPY main.py engine_manager.py ./
 COPY core/ ./core/
 COPY console/ ./console/
 COPY worker/ ./worker/
+COPY engines/ ./engines/
 
 # ── runtime user + writable data dir (persistent volume mount point) ─────────
 RUN useradd --uid 65532 --shell /usr/sbin/nologin emunel \

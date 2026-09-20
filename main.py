@@ -227,7 +227,23 @@ def setup() -> None:
 
 
 setup()
-from emunel_console.main import app as app  # noqa: E402  (exposed for `uvicorn main:app`)
+
+# ── EMUNEL Engines (plugin layer) ───────────────────────────────────────────
+# Wraps the console app with the engine pipeline WITHOUT touching any console
+# or core file. Engines disabled (EMUNEL_ENGINES_ENABLED=0) or an empty
+# pipeline => `app` stays the raw console app and behaviour is bit-for-bit
+# identical to before. Any engine failure is bypassed at runtime (see
+# engines/README.md). This is the single sanctioned wiring point.
+from emunel_console.main import app as _raw_console_app  # noqa: E402
+
+try:
+    from engines.host import wrap_console
+
+    app = wrap_console(_raw_console_app)
+except Exception as _engines_exc:  # absolute fallback: platform first
+    print(f"[emunel] engines could not attach ({_engines_exc}) — "
+          "running without them", file=sys.stderr)
+    app = _raw_console_app
 
 
 def main() -> int:
