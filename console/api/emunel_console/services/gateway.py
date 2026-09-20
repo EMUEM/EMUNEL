@@ -169,15 +169,88 @@ def _clash_inline(p: dict) -> str:
 router = APIRouter(include_in_schema=False)
 
 
+# ── endpoint resolution cache ────────────────────────────────────────────────
+# Every proxied request (proxy clients can generate thousands per minute on
+# xHTTP transports) used to run TWO DB queries and 2-3 INFO log lines. The
+# TTL cache removes both costs: positive results live EMUNEL_ENDPOINT_CACHE_SECONDS
+# (15s), negative results 4s so dead endpoints stop hammering the database
+# during client reconnect storms (the Railway "5.6K requests / 50% errors" spike).
+#
+# The cache is keyed per event loop: one entry-set per running loop. In
+# production there is exactly one loop for the process lifetime; per-loop
+# keying merely keeps test runs (one loop per test) from reading each other's
+# resolutions.
+import asyncio as _asyncio
+import os as _os
+import time as _time
+import weakref as _weakref
+
+_CACHE_TTL = max(2.0, float(_os.environ.get("EMUNEL_ENDPOINT_CACHE_SECONDS", "15")))
+_CACHE_TTL_NEG = min(_CACHE_TTL, max(1.0, float(_os.environ.get("EMUNEL_ENDPOINT_CACHE_NEG_SECONDS", "4"))))
+_CACHE_MAX = 2048
+_caches_by_loop: "weakref.WeakKeyDictionary" = _weakref.WeakKeyDictionary()
+
+
+def _loop_cache() -> dict[str, tuple[float, dict | None]]:
+    try:
+        loop = _asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        return _caches_by_loop.setdefault(_fallback_loop_key, {})
+    return _caches_by_loop.setdefault(loop, {})
+
+
+class _FallbackLoopKey:
+    """Sentinel loop key for calls outside any event loop (sync code)."""
+
+
+_fallback_loop_key = _FallbackLoopKey()
+
+
+def _cache_get(token: str) -> dict | None | bool:
+    """Cached target (dict), cached miss (None) or False when not cached."""
+    entry = _loop_cache().get(token)
+    if entry is None:
+        return False
+    expires, value = entry
+    if _time.time() >= expires:
+        _loop_cache().pop(token, None)
+        return False
+    return value
+
+
+def _cache_put(token: str, value: dict | None) -> None:
+    cache = _loop_cache()
+    if len(cache) >= _CACHE_MAX:
+        # cheap opportunistic trim: drop the ~25% oldest entries
+        for key in list(sorted(cache, key=lambda k: cache[k][0]))[: _CACHE_MAX // 4]:
+            cache.pop(key, None)
+    ttl = _CACHE_TTL if value is not None else _CACHE_TTL_NEG
+    cache[token] = (_time.time() + ttl, value)
+
+
+def invalidate_endpoint_cache(instance_id: str | None = None) -> None:
+    """Drop cached resolutions (all, or one instance's) after lifecycle changes."""
+    for cache in list(_caches_by_loop.values()) + [_caches_by_loop.get(_fallback_loop_key, {})]:
+        if instance_id is None:
+            cache.clear()
+            continue
+        for key in [k for k, (_, v) in cache.items()
+                    if isinstance(v, dict) and v.get("instance_id") == instance_id]:
+            cache.pop(key, None)
+
+
 async def _resolve_endpoint(request: Request, token: str) -> dict | None:
-    """endpoint token -> {instance_id, worker_url, status}"""
+    """endpoint token -> {instance_id, worker_url, status} (TTL-cached)."""
+    cached = _cache_get(token)
+    if cached is not False:
+        return cached
     pool = get_pool(request)
     from ..config import settings as _s
     from ..security.token_codec import decode_token
 
-    log.info("resolve enter: token[:20]=%s", token[:20])
     instance_id = decode_token(token, _s.secret_key)
-    log.info("resolve: token[:16]=%s decoded=%s", token[:16], instance_id)
     if instance_id is not None:
         row = await pool.fetchrow(
             """
@@ -209,16 +282,39 @@ async def _resolve_endpoint(request: Request, token: str) -> dict | None:
     if row is not None and row["endpoint_token"] is None:
         row = None
     if row is None or row["status"] != "running":
-        log.info("resolve MISS: decoded=%s row=%s status=%s", instance_id,
-                 row is not None, row["status"] if row else None)
+        log.debug("endpoint resolve miss (token[:10]=%s)", token[:10])
+        _cache_put(token, None)
         return None
     from ..services.workers import worker_url_for
 
-    return {
+    target = {
         "instance_id": str(row["id"]),
         "worker_url": worker_url_for(row["node_id"] or "local"),
         "upstream": f"/worker/api/instances/{row['id']}/proxy",
     }
+    _cache_put(token, target)
+    return target
+
+
+# ── shared loopback client ───────────────────────────────────────────────────
+# A fresh AsyncClient PER proxied request churned connection pools and TLS
+# contexts and showed up as the container's memory climbing under load; one
+# bounded shared client serves every gateway + subscription hop instead.
+# Keyed by event loop: exactly one client in production (single loop), and
+# test runs (one loop per test) never reuse a client bound to a dead loop.
+_clients_by_loop: "weakref.WeakKeyDictionary" = _weakref.WeakKeyDictionary()
+
+
+def _worker_client() -> httpx.AsyncClient:
+    loop = asyncio.get_running_loop()
+    client = _clients_by_loop.get(loop)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
+            limits=httpx.Limits(max_connections=64, max_keepalive_connections=16),
+        )
+        _clients_by_loop[loop] = client
+    return client
 
 
 @router.get("/i/{token}")
@@ -303,16 +399,17 @@ async def instance_subscription(token: str, request: Request):
     if not host:
         return _page("Missing host", "Append ?host=<your-domain> to this URL.", status=400)
     try:
-        async with _httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{target['worker_url'].rstrip('/')}{target['upstream']}/core/api/share",
-                json={"host": host, "path_prefix": f"/i/{token}", "uuids": []},
-                headers={"Authorization": f"Bearer {_settings.worker_token}",
-                         "Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-            configs = [c for c in resp.json().get("links", []) if c.get("share_url")]
-            links = [c["share_url"] for c in configs]
+        client = _worker_client()
+        resp = await client.post(
+            f"{target['worker_url'].rstrip('/')}{target['upstream']}/core/api/share",
+            json={"host": host, "path_prefix": f"/i/{token}", "uuids": []},
+            headers={"Authorization": f"Bearer {_settings.worker_token}",
+                     "Content-Type": "application/json"},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        configs = [c for c in resp.json().get("links", []) if c.get("share_url")]
+        links = [c["share_url"] for c in configs]
     except Exception as exc:
         return _page("Unavailable", f"Could not read the instance configs: {str(exc)[:160]}",
                      status=502)
@@ -447,7 +544,7 @@ async def instance_http_gateway(token: str, path: str, request: Request):
 
     headers.append(("Authorization", f"Bearer {_cfg.worker_token}"))
 
-    client = httpx.AsyncClient(timeout=None)
+    client = _worker_client()
     try:
         # Stream request bodies too: xHTTP stream-up POSTs are infinite upload
         # streams — buffering via request.body() would wait forever and the
@@ -462,18 +559,20 @@ async def instance_http_gateway(token: str, path: str, request: Request):
             status_code=upstream_resp.status_code,
             headers={k: v for k, v in upstream_resp.headers.items()
                      if k.lower() not in HOP_BY_HOP},
-            background=_close_client(client, upstream_resp),
+            background=_release_response(upstream_resp),
         )
     except httpx.HTTPError:
         raise HTTPException(status_code=502, detail="instance upstream unavailable")
 
 
-def _close_client(client: httpx.AsyncClient, resp):
+def _release_response(resp):
+    """Shared client: only the response is closed after streaming — the
+    client itself (and its bounded connection pool) stays alive for the next
+    hop instead of being rebuilt per request."""
     from starlette.background import BackgroundTask
 
     async def _cleanup() -> None:
         await resp.aclose()
-        await client.aclose()
 
     return BackgroundTask(_cleanup)
 

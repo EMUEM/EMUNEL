@@ -28,14 +28,22 @@ client ──▶ Console (public $PORT)
 
 | How | Effect |
 |---|---|
-| Panel → **Engine Settings** (admin) | hot enable/disable per engine, live status, metrics, logs |
-| `EMUNEL_ENGINE_<NAME>_ENABLED=1/0` | boot-time default; an explicit `0` is a kill-switch the panel cannot override |
+| Panel → **Engine Settings** (admin) | hot enable/disable per engine, live status, metrics, logs — **choices persist across restarts** in the engine state store |
+| `EMUNEL_ENGINE_<NAME>_ENABLED=1/0` | boot-time default; an explicit `0` is a kill-switch the panel cannot override (and beats a persisted panel enable) |
 | `EMUNEL_PIPELINE_ORDER=Coalesce,Morph,...` | execution order; engines not listed are inactive |
 | `EMUNEL_ENGINES_ENABLED=0` | whole layer off — zero overhead, identical behaviour |
 
+Panel toggles are recorded under the `EngineToggles` key of the state
+store (`/data/engines/state.json`): an enable is re-applied with
+`force=True` on the next boot, a disable beats an on-by-default engine,
+and the env kill-switch always wins. On the Engine Settings page engines
+are grouped by where they run — this deployment, inside each Core, or
+off/needs-configuration — so an inactive engine always says why.
+
 Engine names: `Coalesce, Morph, Compress, PreConnect, FEC, Congestion,
 SessionResumption, FakeHandshake, SplitTunnel, SNIRotation,
-DomainFronting, PortHopping`.
+DomainFronting, PortHopping, SNISpoof, Reality`. Morph ships ON: its
+default "baseline" profile is a byte-exact passthrough.
 
 ## The engines — what each one REALLY does
 

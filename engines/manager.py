@@ -25,6 +25,12 @@ from .state import EngineStateStore
 # registry name -> (class, host affinity) filled by engines/engines/__init__.py
 from .engines import REGISTRY
 
+# State-store key holding the operator's hot-toggle decisions. Engines enabled
+# or disabled from the panel survive process restarts (Railway redeploys and
+# crash-restarts) — this is what previously reset Morph back to "off by
+# default" minutes after the operator turned it on.
+TOGGLES_KEY = "EngineToggles"
+
 
 class EngineManager:
     def __init__(self, host: str = "console", cfg: EngineEnv | None = None,
@@ -55,9 +61,29 @@ class EngineManager:
             return
 
         self.state.load()
+        persisted = self._persisted_toggles()
         order = [n for n in self.cfg.pipeline_order]
         for name in order:
-            await self._activate(name)
+            # force=True re-applies the operator's persisted hot-enable (the
+            # env kill-switch EMUNEL_ENGINE_*_ENABLED=0 still wins inside)
+            await self._activate(name, force=bool(persisted.get(name)))
+        # A persisted disable must also hold when the engine's DEFAULT is on
+        # (e.g. Coalesce) — otherwise a restart would silently revert the
+        # operator's choice.
+        for name, want in persisted.items():
+            if want is not False:
+                continue
+            engine = self.engines.get(name)
+            if engine is None:
+                continue
+            if engine.status.active:
+                try:
+                    await engine.stop()
+                except Exception as exc:  # stopping must never raise
+                    engine.log.error(f"stop failed: {exc}")
+            engine.status.active = False
+            engine.status.enabled = False
+            engine.status.reason = "disabled by operator (persisted)"
         self._build_pipelines()
 
         # background: state flush + metrics tick (never crash the host)
@@ -152,7 +178,7 @@ class EngineManager:
             return None
         key = f"{cls.NAME.lower()}_on"
         if hasattr(self.cfg, key) and not getattr(self.cfg, key):
-            return "off by default (enable in Engine Settings or env)"
+            return "off by default (enable in Engine Settings — the choice persists)"
         return None
 
     def _build_pipelines(self) -> None:
@@ -226,6 +252,7 @@ class EngineManager:
             if not was_active and canonical in self.engines:
                 return False, self.engines[canonical].status.reason or "cannot activate"
             self._rebuild()
+            self._record_toggle(canonical, True)
             self.bus.publish("engine.lifecycle", {"action": "enable", "name": canonical})
             return True, "enabled"
         if engine is None or not engine.status.active:
@@ -233,6 +260,7 @@ class EngineManager:
                 engine.status.enabled = False
                 engine.status.reason = "disabled by operator"
             self._rebuild()
+            self._record_toggle(canonical, False)
             self.bus.publish("engine.lifecycle", {"action": "disable", "name": canonical})
             return True, "disabled"
         try:
@@ -243,8 +271,31 @@ class EngineManager:
         engine.status.enabled = False
         engine.status.reason = "disabled by operator"
         self._rebuild()
+        self._record_toggle(canonical, False)
         self.bus.publish("engine.lifecycle", {"action": "disable", "name": canonical})
         return True, "disabled"
+
+    # ---- toggle persistence -------------------------------------------------------------
+    def _record_toggle(self, name: str, enabled: bool) -> None:
+        """Remember the operator's decision so the next boot re-applies it."""
+
+        def _apply(payload: dict) -> None:
+            payload.setdefault("enabled", {})[name] = bool(enabled)
+
+        self.state.mutate(TOGGLES_KEY, _apply)
+        self.state.maybe_flush(force=True)
+
+    def _persisted_toggles(self) -> dict[str, bool]:
+        """Previously recorded operator decisions: {engine name: enabled?}."""
+        try:
+            payload = self.state.get(TOGGLES_KEY, {}) or {}
+            enabled = payload.get("enabled")
+            if isinstance(enabled, dict):
+                return {str(k): bool(v) for k, v in enabled.items()
+                        if isinstance(v, bool)}
+        except Exception:
+            pass
+        return {}
 
     def _canonical(self, name: str) -> str | None:
         if name in REGISTRY:

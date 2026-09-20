@@ -20,7 +20,7 @@ from .db import close_db, init_pool
 from .logging import get, setup_logging
 from .panel import router as panel_router
 from .routers import admin, auth, backup, domains, instances, internal
-from .security.ratelimit import RULES, client_ip, limiter
+from .security.ratelimit import RateLimitASGI
 from .services.gateway import router as gateway_router
 
 setup_logging()
@@ -30,6 +30,10 @@ FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 app = FastAPI(title="EMUNEL Console", docs_url=None, redoc_url=None,
               version=version.version())
+
+# Control-plane rate limiting (auth + panel APIs only — never the /i/* proxy
+# gateway; see RateLimitASGI for why). Pure ASGI, streaming-safe.
+app.add_middleware(RateLimitASGI)
 
 app.include_router(panel_router)
 app.include_router(auth.router)

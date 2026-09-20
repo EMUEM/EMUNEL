@@ -113,9 +113,13 @@ def main() -> int:
         check("engine matrix returned (14 engines)", len(names) == 14,
               f"got {sorted(names)}")
         check("Coalesce active by default", names.get("Coalesce", {}).get("active") is True)
-        check("Morph inactive with honest reason",
-              names.get("Morph", {}).get("active") is False
-              and "reason" in names.get("Morph", {}))
+        # v1.1.0: Morph ships ON (its baseline profile is a byte-exact
+        # passthrough) and panel toggles persist across restarts.
+        check("Morph active by default (v1.1.0)",
+              names.get("Morph", {}).get("active") is True)
+        check("Compress inactive with honest reason",
+              names.get("Compress", {}).get("active") is False
+              and "reason" in names.get("Compress", {}))
         check("FakeHandshake active by default",
               names.get("FakeHandshake", {}).get("active") is True)
         check("SplitTunnel active by default",

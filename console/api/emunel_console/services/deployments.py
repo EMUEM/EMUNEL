@@ -100,6 +100,9 @@ async def _instance_row(pool: asyncpg.Pool, instance_id: str) -> asyncpg.Record:
 
 async def deploy_instance(pool: asyncpg.Pool, instance_id: str, *, is_redeploy: bool = False) -> str:
     """Queue a deployment and run the pipeline as a background task."""
+    from .gateway import invalidate_endpoint_cache
+
+    invalidate_endpoint_cache(instance_id)
     row = await pool.fetchrow(
         "SELECT COALESCE(MAX(version), 0) + 1 AS v FROM deployments WHERE instance_id = $1",
         instance_id,
@@ -430,6 +433,9 @@ async def _provider_for_instance(pool: asyncpg.Pool, instance_id: str) -> tuple[
 
 
 async def stop_instance(pool: asyncpg.Pool, instance_id: str) -> None:
+    from .gateway import invalidate_endpoint_cache
+
+    invalidate_endpoint_cache(instance_id)
     kind, inst = await _provider_for_instance(pool, instance_id)
     if kind == "railway":
         provider = railway_provider()
@@ -452,6 +458,9 @@ async def stop_instance(pool: asyncpg.Pool, instance_id: str) -> None:
 
 
 async def restart_instance(pool: asyncpg.Pool, instance_id: str) -> None:
+    from .gateway import invalidate_endpoint_cache
+
+    invalidate_endpoint_cache(instance_id)
     kind, inst = await _provider_for_instance(pool, instance_id)
     if kind == "railway":
         provider = railway_provider()
@@ -466,6 +475,9 @@ async def restart_instance(pool: asyncpg.Pool, instance_id: str) -> None:
 
 
 async def delete_from_provider(pool: asyncpg.Pool, instance_id: str) -> None:
+    from .gateway import invalidate_endpoint_cache
+
+    invalidate_endpoint_cache(instance_id)
     kind, inst = await _provider_for_instance(pool, instance_id)
     if kind == "railway":
         provider = railway_provider()

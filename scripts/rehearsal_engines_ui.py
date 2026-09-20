@@ -110,7 +110,11 @@ def main() -> int:
         matrix = json.loads(body) if status == 200 else {}
         names = [e["name"] for e in matrix.get("engines", [])]
         check("engine matrix returned through the API",
-              status == 200 and len(names) == 12, f"{len(names)} engines")
+              status == 200 and len(names) == 14, f"{len(names)} engines")
+        # Morph now ships ON (default profile = byte-exact passthrough)
+        morph = {e["name"]: e for e in matrix.get("engines", [])}.get("Morph", {})
+        check("Morph active by default (toggle no longer resets)",
+              morph.get("active") is True, f"active={morph.get('active')}")
 
         # 5. hot disable -> enable via the API the page calls
         status, body, _ = http("/api/engines/Coalesce/disable", method="POST",

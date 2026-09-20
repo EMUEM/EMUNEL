@@ -48,6 +48,11 @@ a{color:var(--blu);text-decoration:none}
 .menu-btn{display:none}
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:55;display:none}
 .scrim.on{display:block}
+/* bottom nav is mobile-only: hidden by default (BEFORE the media query, so
+   the cascade is correct) and shown inside it. Previously the overriding
+   .bnav{display:none} sat AFTER the media block and killed the mobile nav
+   entirely, leaving only the hamburger drawer. */
+.bnav{display:none}
 @media(max-width:840px){
   .shell{grid-template-columns:1fr}
   .menu-btn{display:inline-flex;margin-left:auto}
@@ -57,8 +62,8 @@ a{color:var(--blu);text-decoration:none}
 .topbar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:30;background:rgba(10,12,16,.94);border-bottom:1px solid var(--bd);padding:12px 14px}
 .ct{padding:16px 12px 90px}
 .bnav{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:30;background:rgba(13,16,22,.97);border-top:1px solid var(--bd);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
-.bnav .ni{flex:1;flex-direction:column;gap:2px;font-size:10px;align-items:center;padding:6px 0}}
-.bnav{display:none}
+.bnav .ni{flex:1;flex-direction:column;gap:2px;font-size:10px;align-items:center;padding:6px 0;min-width:0;white-space:nowrap}
+.bnav .ni svg{width:17px;height:17px}}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 13px;border-radius:var(--rs);border:1px solid var(--bd2);background:var(--sur2);color:var(--tx);font:600 13px var(--sans);cursor:pointer;white-space:nowrap;transition:background .12s ease,border-color .12s ease,box-shadow .12s ease,transform .06s ease;box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
 .btn:hover{background:#1c212c;border-color:#37415a}
 .btn:active{transform:translateY(1px)}
@@ -195,6 +200,7 @@ function api(method,path,body,retry){
   var h={"Content-Type":"application/json"};
   if(CSRF)h["X-EMUNEL-CSRF"]=CSRF;
   return fetch(path,{method:method,headers:h,credentials:"same-origin",body:body!==undefined?JSON.stringify(body):undefined})
+  .catch(function(err){noteNetErr();throw err})
   .then(function(r){
     // 429 = too fast; wait what the server asks (or 2s) and retry silently
     if(r.status===429&&(retry||0)<3){
@@ -231,9 +237,33 @@ var MARK_L='<svg viewBox="0 0 32 32" fill="none">'+MARK_IN+"</svg>";
 // ───────────────────────────── shell/state ─────────────────────────────
 var USER=null, cleanup=null, pollTimer=null, LINKS={github:"https://github.com/mehialadi-star/EMUNEL",telegram:""}, BUILD_STAMP="__EMUNEL_BUILD__";
 function setCleanup(fn){if(cleanup)cleanup();cleanup=fn||null}
-function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}if(hiddenTimer){clearInterval(hiddenTimer);hiddenTimer=null}}
-var hiddenTimer=null;
-function every(ms,fn){return setInterval(function(){if(!document.hidden)fn()},ms)}
+function stopPoll(){if(pollTimer){if(pollTimer.stop)pollTimer.stop();else clearInterval(pollTimer);pollTimer=null}}
+// Resilient polling: skips overlapping runs, pauses while the tab is hidden
+// and backs off exponentially (x2 up to 60s) while requests keep failing, so
+// a struggling server never gets hammered by an open panel page. fn should
+// return its promise for the overlap guard to work.
+function poll(ms,fn){
+  var stop=false,t=null,busy=false,fail=0;
+  function run(){
+    if(stop)return;
+    if(document.hidden){t=setTimeout(run,1000);return}
+    if(busy){t=setTimeout(run,600);return}
+    busy=true;
+    Promise.resolve().then(fn).then(
+      function(){fail=0},
+      function(){fail++}).then(function(){
+        busy=false;
+        var wait=fail>0?Math.min(ms*Math.pow(2,fail),60000):ms;
+        t=setTimeout(run,wait)});
+  }
+  run();
+  return {stop:function(){stop=true;if(t)clearTimeout(t)}}}
+// Visible connection state: network-level fetch failures surface ONE toast
+// per 30s instead of silently breaking the page ("random disconnects").
+var _netErrAt=0;
+function noteNetErr(){
+  var n=Date.now();
+  if(n-_netErrAt>30000){_netErrAt=n;toast("Connection problem — the panel keeps retrying in the background…","err",5000)}}
 function shell(nav){
   stopPoll();setCleanup(null);
   var app=$("#app");
@@ -327,8 +357,8 @@ function viewDash(){
       '<div class="mt"><span>'+esc(i.region)+"</span>"+(i.volume_limit_bytes?'<span class="chip">'+fmtBytes(i.volume_limit_bytes)+"</span>":"")+(i.volume_expires_at?'<span class="chip">'+(Math.ceil((new Date(i.volume_expires_at)-Date.now())/864e5)||1)+"d left</span>":"")+"<span>"+i.deployments_count+' deploys</span><span>created '+ago(i.created_at)+"</span></div></div>";
   }
   load().then(function(list){
-    pollTimer=every(6000,function(){
-      if(list.some(function(i){return BUSY[i.status]}))load();
+    pollTimer=poll(6000,function(){
+      if(list.some(function(i){return BUSY[i.status]}))return load();
     });
   });
 }
@@ -402,9 +432,8 @@ function viewWizard(){
       .then(function(created){return api("POST","/api/instances/"+created.id+"/deploy").then(function(d){return{c:created,d:d}})})
       .then(function(r){
         $("#di").textContent=r.d.deployment_id.slice(0,8);var seen=0;
-        pollTimer=every(2000,function(){
-          if(document.hidden)return;
-          Promise.all([api("GET","/api/instances/"+r.c.id+"/deployments/"+r.d.deployment_id+"/logs"),api("GET","/api/instances/"+r.c.id+"/deployments")])
+        pollTimer=poll(2000,function(){
+          return Promise.all([api("GET","/api/instances/"+r.c.id+"/deployments/"+r.d.deployment_id+"/logs"),api("GET","/api/instances/"+r.c.id+"/deployments")])
           .then(function(rs){
             var logs=rs[0].logs;for(;seen<logs.length;seen++){var e=document.createElement("div");e.className="ll "+logs[seen].level;e.innerHTML='<span class="lv">'+logs[seen].level+"</span> "+esc(logs[seen].message);var dl=$("#dl");if(dl){dl.appendChild(e);dl.scrollTop=dl.scrollHeight}}
             var dep=(rs[1].deployments||[]).filter(function(d){return d.id===r.d.deployment_id})[0];
@@ -412,7 +441,7 @@ function viewWizard(){
               if(dep.status==="running"){$("#ds").style.color="var(--grn)";stopPoll();$("#nx").disabled=false;$("#nx").textContent="Go to instance";$("#nx").onclick=function(){viewInst(r.c.id)};toast("Instance is running","ok")}
               else if(dep.status==="failed"){$("#ds").style.color="var(--red)";stopPoll();$("#nx").disabled=false;$("#nx").textContent="Retry";$("#nx").onclick=function(){viewInst(r.c.id)};toast("Deployment failed: "+(dep.error||"unknown"),"err",8000)}}
           }).catch(function(){});
-        },1500);
+        });
       }).catch(function(e){toast(e.message,"err",6000);step=5;show();$("#nx").disabled=false});
       return}
     else if(step<6)step+=1;
@@ -690,9 +719,9 @@ function viewInst(id){
     .catch(function(){});
   }
   refresh().then(function(){
-    pollTimer=every(5000,function(){
-      if(tab==="logs")pollLogs();
-      else if(BUSY[inst.status]||tab==="overview")refresh();
+    pollTimer=poll(5000,function(){
+      if(tab==="logs")return pollLogs();
+      else if(BUSY[inst.status]||tab==="overview")return refresh();
     });
   });
   setCleanup(function(){});
@@ -818,6 +847,24 @@ function viewEngines(){
     ov.onclick=function(e){if(e.target===ov)ov.remove()};
     $("#egx",ov).onclick=function(){ov.remove()};
     return ov}
+  // Group engines so "why is it not active" is answerable at a glance.
+  function egSection(title,sub,es){
+    if(!es.length)return "";
+    return '<h3 style="margin:18px 0 10px;font-size:13.5px">'+esc(title)+' <span class="ftx" style="font-size:11px;font-weight:400">('+es.length+")</span></h3>"+
+      '<p class="ftx" style="font-size:11.5px;margin:-4px 0 10px">'+esc(sub)+"</p>"+
+      '<div class="ig">'+es.map(egCard).join("")+"</div>"}
+  function egGroups(es){
+    var con=[],core=[],off=[];
+    es.forEach(function(e){
+      var hosts=e.host||[];
+      var envOff=e.reason&&e.reason.indexOf("disabled by env")===0;
+      var opOff=e.reason&&(e.reason.indexOf("disabled by operator")===0||e.reason.indexOf("off by default")===0);
+      if(hosts.indexOf("core")>=0&&hosts.indexOf("console")<0&&!(envOff||opOff))core.push(e);
+      else if((envOff||opOff)||(hosts.indexOf("console")<0&&hosts.indexOf("core")<0))off.push(e);
+      else con.push(e)});
+    return egSection("Runs on this deployment","Active on the panel/gateway process. Toggle freely — your choices survive restarts.",con)+
+      egSection("Runs inside each proxy instance (Core)","These activate per running instance — see their live status in the Core-side section below.",core)+
+      egSection("Off / needs configuration","Either turned off (press Enable) or waiting for operator configuration — each card shows exactly what it needs.",off)}
   function load(){
     api("GET","/api/engines").then(function(d){
       var es=d.engines||[],act=0;es.forEach(function(e){if(e.active)act++});
@@ -825,7 +872,7 @@ function viewEngines(){
       var po=(d.pipeline_order||[]).join(" → ")||"—";
       $("#eg-s").innerHTML=egSg("Engines active",act+" / "+es.length,act?"var(--grn)":"")+egSg("Pipeline order",po)+
         egSg("Engine data",d.data_dir||"—")+egSg("Uptime",fmtUp(Math.round(d.uptime||0)));
-      $("#eg-c").innerHTML=es.length?es.map(egCard).join(""):'<div class="card"><span class="mut">No engines registered.</span></div>';
+      $("#eg-c").innerHTML=es.length?egGroups(es):'<div class="card"><span class="mut">No engines registered.</span></div>';
       var cs=d.cores||[];
       $("#eg-k").innerHTML='<h3 style="margin:0 0 8px">Core-side engines (per running instance)</h3>'+
         (cs.length?cs.map(function(c){
@@ -863,7 +910,7 @@ function viewEngines(){
       egModal("Engine selftest — "+(r&&r.all_ok?"all checks passed":"review results"),JSON.stringify(r,null,2))})
     .catch(function(e){b.disabled=false;toast(e.message,"err")})};
   load();
-  pollTimer=every(20000,load);
+  pollTimer=poll(20000,function(){return load()});
 }
 // ───────────────────────────── bypass (SNI + REALITY) ─────────────────────────────
 function viewBypass(){
@@ -1019,7 +1066,7 @@ function viewBypass(){
   }
   $("#bp-rf").onclick=function(){loadHead();loadSni();loadReality()};
   loadHead();loadSni();loadReality();
-  pollTimer=every(20000,function(){loadHead();loadReality()});
+  pollTimer=poll(20000,function(){loadHead();return loadReality()});
 }
 // ───────────────────────────── boot ─────────────────────────────
 function render(){

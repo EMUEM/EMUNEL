@@ -25,6 +25,7 @@ on mutations) and are additive: the existing /api/* surface is untouched.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 
 from fastapi import APIRouter, Request
@@ -32,6 +33,7 @@ from fastapi import APIRouter, Request
 from .base import KIND_CONFIGGEN, KIND_FRAMES
 
 _cache: dict = {"at": 0.0, "cores": []}
+_skip_until: dict[str, float] = {}   # instance_id -> monotonic ts to re-probe
 
 
 def build_router(manager) -> APIRouter:
@@ -55,10 +57,40 @@ def build_router(manager) -> APIRouter:
 
     async def _core_engine_status(request: Request) -> list[dict]:
         """Best-effort per-instance core-side engine status through the
-        existing worker proxy path (cached; never blocks the response)."""
+        existing worker proxy path.
+
+        Sequential 2.5s worker calls made /api/engines crawl (the panel polls
+        it) whenever a Core was slow — now every instance is probed in
+        PARALLEL with a short timeout, results are cached for a full minute
+        and instances that just failed are skipped for a cool-off period."""
         now = time.monotonic()
-        if now - _cache["at"] < max(3.0, manager.cfg.status_cache_sec):
+        cache_ttl = max(15.0, manager.cfg.status_cache_sec * 4)
+        if now - _cache["at"] < cache_ttl:
             return _cache["cores"]
+
+        async def _one(row) -> dict | None:
+            instance_id = str(row["id"])
+            try:
+                node_url = await _node_url(pool, instance_id)
+                status = await worker_svc.worker_call(
+                    node_url, "GET",
+                    f"/worker/api/instances/{instance_id}/proxy/engines/api/status",
+                    timeout=1.5,
+                )
+                if isinstance(status, dict):
+                    _skip_until.pop(instance_id, None)
+                    return {
+                        "instance_id": instance_id,
+                        "instance_name": row["name"],
+                        "engines": status.get("engines", []),
+                        "host": status.get("host", "core"),
+                    }
+            except Exception:
+                pass
+            # unreachable core: stop probing it for two minutes
+            _skip_until[instance_id] = now + 120.0
+            return None
+
         cores: list[dict] = []
         try:
             from emunel_console.services import workers as worker_svc
@@ -67,24 +99,10 @@ def build_router(manager) -> APIRouter:
             pool = _pool(request)
             rows = await pool.fetch(
                 "SELECT id, name FROM instances WHERE status = 'running' LIMIT 25")
-            for row in rows:
-                instance_id = str(row["id"])
-                try:
-                    node_url = await _node_url(pool, instance_id)
-                    status = await worker_svc.worker_call(
-                        node_url, "GET",
-                        f"/worker/api/instances/{instance_id}/proxy/engines/api/status",
-                        timeout=2.5,
-                    )
-                    if isinstance(status, dict):
-                        cores.append({
-                            "instance_id": instance_id,
-                            "instance_name": row["name"],
-                            "engines": status.get("engines", []),
-                            "host": status.get("host", "core"),
-                        })
-                except Exception:
-                    continue
+            rows = [r for r in rows if _skip_until.get(str(r["id"]), 0.0) < now]
+            if rows:
+                results = await asyncio.gather(*[_one(r) for r in rows])
+                cores = [c for c in results if c]
         except Exception:
             cores = []
         _cache["at"] = now

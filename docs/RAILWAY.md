@@ -209,3 +209,39 @@ Prefer domestic heavy-traffic targets the ISP cannot block wholesale —
 `blubank.com`, `divar.ir`, `snapp.ir`. Avoid `google.com` /
 `microsoft.com` (censor-monitored). REALITY works with RAW, XHTTP and
 gRPC transports only.
+
+## Troubleshooting: "the new feature is not in my panel"
+
+Symptoms like "the Bypass tab is missing" or "only 4 engines work" almost
+always mean the **deployment is stale** — Railway is still serving an older
+build of the repo. Verify and fix in this order:
+
+1. **Check the build stamp.** The panel sidebar (bottom of the desktop
+   drawer) and `/health` both show `build <timestamp>`. If the timestamp is
+   older than your last push, the running deployment predates it.
+2. **Check the service source.** If the GitHub repository was moved or
+   renamed (e.g. to a new owner/org), Railway's webhook may still point at
+   the old location and never sees your pushes. Service → Settings → Source
+   (or the GitHub tab) must point at the **current** repo + branch.
+3. **Trigger a deploy manually.** Service → Deployments → **Deploy latest
+   commit** (or push any commit). Watch the build finish; the panel's build
+   stamp should refresh within a minute of startup.
+4. **Confirm what shipped.** After the deploy: `/health` shows the new build
+   stamp, the sidebar shows `v1.1.0` in the panel footer info, Engines shows
+   grouped sections, and Bypass is next to Engines in the nav (admin
+   accounts; on phones it is in the bottom bar and the drawer).
+
+### Why the panel may have felt unstable (fixed in v1.1.0)
+
+- **Mobile bottom nav was dead CSS** — on phones the only navigation was
+  the hidden hamburger drawer, so Engines/Bypass looked "missing".
+- **Engine hot-toggles reset on every restart** — enable/disable choices
+  now persist in the engine state store (attach the `/data` volume so they
+  survive redeploys).
+- **Request storms slowed everything down** — endpoint resolution is now
+  cached (no more 2 DB queries + log lines per proxied request), proxy
+  clients hammering a dead endpoint no longer touch the database, and
+  panel polling backs off instead of piling on when the server struggles.
+- **Rate limiting was never wired** — /auth/* and /api/* are now limited
+  (30 / 1200 / 240 per minute per IP); proxy traffic on /i/* is never
+  limited (xHTTP packet-up and carrier-NAT users would break).

@@ -9,7 +9,7 @@ APP_NAME = "EMUNEL Console"
 
 
 def version() -> str:
-    return os.environ.get("EMUNEL_CONSOLE_VERSION", "1.0.0")
+    return os.environ.get("EMUNEL_CONSOLE_VERSION", "1.1.0")
 
 
 def build() -> str:

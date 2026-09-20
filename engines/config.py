@@ -119,8 +119,11 @@ class EngineEnv:
     max_http_buffer_bytes: int = 8 * 1024 * 1024
 
     # ── per-engine enable flags ───────────────────────────────────────────
+    # Morph ships ON: its default profile ("baseline": chunk 0 / delay 0) is a
+    # byte-exact passthrough, so it costs nothing until profiles are configured
+    # — and the engine no longer looks "broken" out of the box.
     coalesce_on: bool = True
-    morph_on: bool = False
+    morph_on: bool = True
     compress_on: bool = False
     preconnect_on: bool = True
     fec_on: bool = False
@@ -273,7 +276,7 @@ def parse_env(host: str = "console") -> EngineEnv:
         max_http_buffer_bytes=_int("EMUNEL_ENGINE_HTTP_MAX_BUFFER_BYTES", 8 * 1024 * 1024),
 
         coalesce_on=_bool("EMUNEL_ENGINE_COALESCE_ENABLED", True),
-        morph_on=_bool("EMUNEL_ENGINE_MORPH_ENABLED", False),
+        morph_on=_bool("EMUNEL_ENGINE_MORPH_ENABLED", True),
         compress_on=_bool("EMUNEL_ENGINE_COMPRESS_ENABLED", False),
         preconnect_on=_bool("EMUNEL_ENGINE_PRECONNECT_ENABLED", True),
         fec_on=_bool("EMUNEL_ENGINE_FEC_ENABLED", False),
