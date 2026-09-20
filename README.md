@@ -145,6 +145,7 @@ emunel/
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Managed platforms, Docker self-hosting, compose |
 | [RAILWAY.md](docs/RAILWAY.md) | Railway guide: deploy, volumes, bypass, troubleshooting |
 | [engines/README.md](engines/README.md) | Engine pipeline, Bypass section, env reference |
+| [INSTALLATION.md](docs/INSTALLATION.md) · [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Prerequisites, running tests, code conventions |
 
 ## 📄 License
 
