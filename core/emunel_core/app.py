@@ -232,6 +232,33 @@ class Core:
             await self.store.save(self.links, self.stats)
             return {"ok": True}
 
+        # -- instance-wide lifetime cap (Console volume limit) -----------------
+        @app.get("/core/api/quota")
+        async def core_quota_get(_=Depends(guard)):
+            return {
+                "cap_bytes": int(self.stats.instance_cap_bytes),
+                "used_bytes": int(self.stats.total_bytes),
+                "enforced": int(self.stats.instance_cap_bytes) > 0,
+                "cap_hits": int(getattr(self.stats, "instance_cap_hits", 0)),
+            }
+
+        @app.put("/core/api/quota")
+        async def core_quota_set(request: Request, _=Depends(guard)):
+            """Set the absolute lifetime-total cap (0 = unlimited). The Console
+            sends baseline + limit; the cap survives restarts through the
+            state file and is enforced at relay time (QuotaGate)."""
+            body = await request.json()
+            raw = body.get("cap_bytes", body.get("instance_cap_bytes"))
+            try:
+                cap = max(0, int(raw or 0))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="cap_bytes must be an integer")
+            if cap > 1024 ** 5:
+                raise HTTPException(status_code=400, detail="cap_bytes is above the 1 PB maximum")
+            self.stats.instance_cap_bytes = cap
+            self._schedule_save()
+            return {"ok": True, "cap_bytes": cap, "used_bytes": int(self.stats.total_bytes)}
+
     # ---- helpers -----------------------------------------------------------
     def _link_from_body(self, body: dict) -> Link:
         from .config import DEFAULT_PROTOCOL, PROTOCOLS

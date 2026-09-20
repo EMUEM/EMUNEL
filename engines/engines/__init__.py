@@ -18,6 +18,8 @@ from .split_tunneling import SplitTunnelingEngine
 from .sni_rotation import SNIRotationEngine
 from .domain_fronting import DomainFrontingEngine
 from .port_hopping import PortHoppingEngine
+from .sni_spoofing import SNISpoofingEngine
+from .reality import RealityEngine
 
 REGISTRY: dict[str, type] = {
     "Coalesce": CoalescingEngine,
@@ -32,6 +34,8 @@ REGISTRY: dict[str, type] = {
     "SNIRotation": SNIRotationEngine,
     "DomainFronting": DomainFrontingEngine,
     "PortHopping": PortHoppingEngine,
+    "SNISpoof": SNISpoofingEngine,
+    "Reality": RealityEngine,
 }
 
 __all__ = ["REGISTRY"]

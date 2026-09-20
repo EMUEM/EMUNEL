@@ -43,6 +43,15 @@ MAX_LIMIT_BYTES = 1024 ** 5           # 1 PB
 MIN_TIME_LIMIT_DAYS = 1 / 1440        # one minute
 MAX_TIME_LIMIT_DAYS = 3650             # ten years
 
+# Relay-time enforcement: the Console pushes the instance cap into the
+# Core (/core/api/quota) so the limit holds even when this loop cannot
+# reach the Core (heavy load, worker hiccup). The loop below remains as a
+# second line: it reconciles drifted caps and stops capped instances.
+_STALE_ALERT_AFTER = max(1, int(os.environ.get("EMUNEL_VOLUME_STALE_ALERT_MISSES", "2")))
+_STALE_STOP_MINUTES = max(0.0, float(os.environ.get("EMUNEL_VOLUME_STALE_STOP_MINUTES", "0")))
+_REGRESSION_MARGIN_BYTES = 16 * 1024 * 1024   # live usage may legitimately lag the debounce
+_stale: dict[str, dict] = {}                    # instance_id -> {misses, first_miss, alerted}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -121,6 +130,43 @@ async def _row(pool, instance_id: str):
     )
 
 
+async def push_core_cap(pool, instance_id: str) -> bool:
+    """Push the instance's ABSOLUTE lifetime cap into the Core so the volume
+    limit is enforced at relay time (QuotaGate), not only by this loop.
+
+    cap = baseline + limit  (0 = unlimited). On core-state regression (see
+    enforce_all) the cap is recomputed to preserve the remaining allowance.
+    Returns True when the Core accepted the push."""
+    row = await _row(pool, instance_id)
+    if row is None or not row["limit_bytes"]:
+        cap = 0
+    else:
+        cap = int(row["baseline_bytes"] or 0) + int(row["limit_bytes"])
+    try:
+        await _core_call(pool, instance_id, "PUT", "quota",
+                          json_body={"cap_bytes": cap}, timeout=8.0)
+        return True
+    except (worker_svc.WorkerError, OSError) as exc:
+        log.warning("core cap push failed for %s: %s", instance_id[:8], exc)
+        return False
+
+
+async def _core_call(pool, instance_id: str, method: str, path: str,
+                     json_body: dict | None = None, timeout: float = 8.0) -> dict:
+    row = await pool.fetchrow(
+        "SELECT node_id FROM deployments WHERE instance_id = $1 "
+        "ORDER BY started_at DESC LIMIT 1",
+        instance_id,
+    )
+    node_id = (row["node_id"] if row else None) or settings.default_worker_node
+    node_url = worker_svc.worker_url_for(node_id)
+    return await worker_svc.worker_call(
+        node_url, method,
+        f"/worker/api/instances/{instance_id}/proxy/core/api/{path.lstrip('/')}",
+        json_body=json_body, timeout=timeout,
+    )
+
+
 async def _live_total(pool, instance_id: str) -> int | None:
     """Lifetime transferred bytes as reported by the instance's Core
     (persisted by the Core itself, so it survives restarts)."""
@@ -141,6 +187,14 @@ async def _live_total(pool, instance_id: str) -> int | None:
         return None
     total = stats.get("total_bytes")
     return int(total) if isinstance(total, (int, float)) else None
+
+
+async def _core_quota(pool, instance_id: str) -> dict | None:
+    """Current instance cap as held by the Core (None when unreachable)."""
+    try:
+        return await _core_call(pool, instance_id, "GET", "quota", timeout=6.0)
+    except (worker_svc.WorkerError, OSError):
+        return None
 
 
 async def get_state(pool, instance_id: str) -> dict:
@@ -211,6 +265,7 @@ async def set_limit(pool, instance_id: str, limit: int | None,
         """,
         instance_id, limit, now,
     )
+    await push_core_cap(pool, instance_id)
     if user_id:
         await _activity(pool, user_id, instance_id,
                         "Volume limit set to unlimited (default)"
@@ -263,6 +318,9 @@ async def reset_usage(pool, instance_id: str, *, user_id: str | None = None,
         "WHERE instance_id = $1",
         instance_id, new_baseline, _utcnow(),
     )
+    # The absolute cap moved with the baseline — re-push so relay-time
+    # enforcement immediately reflects the fresh accounting period.
+    await push_core_cap(pool, instance_id)
     if user_id:
         await _activity(pool, user_id, instance_id,
                         f"Usage counter for '{name}' reset")
@@ -293,8 +351,24 @@ async def time_reached(pool, instance_id: str) -> tuple[bool, dict | None]:
 
 
 async def enforce_all(pool) -> None:
-    """Stop every running instance that has reached its volume or time cap.
-    Never raises."""
+    """Second line of defense for the volume/time caps.
+
+    The FIRST line is relay-time: the cap is pushed into the Core
+    (/core/api/quota) and enforced by the Core's QuotaGate on every
+    relayed chunk, so traffic is cut even when this loop cannot reach the
+    Core at all. This loop then:
+
+      * reconciles drifted caps (re-pushes what the Core lost),
+      * stops instances that reached their cap or expiry (lifecycle),
+      * alerts when accounting goes stale (stats unreachable for too
+        long) and — only if EMUNEL_VOLUME_STALE_STOP_MINUTES is set —
+        stops the instance after that many blind minutes,
+      * repairs core-state regression (wiped Core state file): the cap is
+        recomputed against the fresh lifetime counter so a lost state
+        file can never silently renew the quota.
+
+    Never raises.
+    """
     try:
         rows = await pool.fetch(
             """
@@ -314,6 +388,7 @@ async def enforce_all(pool) -> None:
         instance_id = str(row["instance_id"])
         limit = int(row["limit_bytes"]) if row["limit_bytes"] else None
         baseline = int(row["baseline_bytes"] or 0)
+        cached = int(row["used_cache"] or 0)
         expires_at = row["expires_at"]
         try:
             if expires_at is not None:
@@ -330,13 +405,64 @@ async def enforce_all(pool) -> None:
                         f"(expired {_fmt_when(expires_dt)})",
                         level="warn",
                     )
+                    _stale.pop(instance_id, None)
                     continue
             if not limit:
+                _stale.pop(instance_id, None)
                 continue
+
+            # -- reconcile the relay-time cap (drift = re-pushed) ------------
+            quota = await _core_quota(pool, instance_id)
+            expected_cap = baseline + limit
+            if quota is not None and int(quota.get("cap_bytes") or 0) != expected_cap:
+                try:
+                    await _core_call(pool, instance_id, "PUT", "quota",
+                                     json_body={"cap_bytes": expected_cap}, timeout=8.0)
+                    log.info("re-pushed core cap for %s (had %s, wanted %s)",
+                             instance_id[:8], quota.get("cap_bytes"), expected_cap)
+                except (worker_svc.WorkerError, OSError) as exc:
+                    log.warning("cap re-push failed for %s: %s", instance_id[:8], exc)
+
             total = await _live_total(pool, instance_id)
             if total is None:
+                # Accounting is blind for this instance RIGHT NOW. The Core
+                # still enforces the pushed cap at relay time, so this is a
+                # monitoring concern — alert, and (opt-in) stop after N blind
+                # minutes rather than silently allowing traffic.
+                await _note_stale(pool, instance_id, row["name"])
                 continue
+            _stale.pop(instance_id, None)
+
             used = max(0, total - baseline)
+            # -- core-state regression repair --------------------------------
+            # A wiped Core state file restarts the lifetime counter at 0,
+            # which would silently renew the quota. Detect it (live usage
+            # far below the last cached value) and recompute the absolute
+            # cap so the REMAINING allowance is what survives.
+            if cached > _REGRESSION_MARGIN_BYTES and used + _REGRESSION_MARGIN_BYTES < cached:
+                repaired_cap = total + max(0, limit - cached)
+                try:
+                    await _core_call(pool, instance_id, "PUT", "quota",
+                                     json_body={"cap_bytes": repaired_cap}, timeout=8.0)
+                except (worker_svc.WorkerError, OSError) as exc:
+                    log.warning("regression cap repair failed for %s: %s",
+                                instance_id[:8], exc)
+                await pool.execute(
+                    "UPDATE instance_volume SET baseline_bytes = $2, updated_at = $3 "
+                    "WHERE instance_id = $1",
+                    instance_id, total, _utcnow(),
+                )
+                owner = await pool.fetchrow(
+                    "SELECT user_id FROM instances WHERE id = $1", instance_id)
+                await _activity(
+                    pool, str(owner["user_id"]) if owner else None, instance_id,
+                    f"Instance '{row['name']}' — Core state was lost; volume "
+                    f"accounting repaired (kept {_fmt(max(0, limit - cached))} of "
+                    f"the allowance)",
+                    level="warn",
+                )
+                used = cached
+                baseline = total
             await pool.execute(
                 "UPDATE instance_volume SET used_cache = $2, used_at = $3 WHERE instance_id = $1",
                 instance_id, used, _utcnow(),
@@ -356,6 +482,45 @@ async def enforce_all(pool) -> None:
             )
         except Exception as exc:
             log.warning("volume check failed for %s: %s", instance_id, exc)
+
+
+async def _note_stale(pool, instance_id: str, name: str) -> None:
+    """Track and alert on consecutive accounting misses for a capped,
+    running instance. The Core's relay-time cap keeps the limit enforced;
+    these alerts tell the operator their usage VIEW is stale."""
+    now = _utcnow()
+    entry = _stale.setdefault(
+        instance_id, {"misses": 0, "first_miss": now, "alerted": False})
+    entry["misses"] += 1
+    if entry["misses"] >= _STALE_ALERT_AFTER and not entry["alerted"]:
+        entry["alerted"] = True
+        owner = await pool.fetchrow(
+            "SELECT user_id FROM instances WHERE id = $1", instance_id)
+        await _activity(
+            pool, str(owner["user_id"]) if owner else None, instance_id,
+            f"Instance '{name}' — volume usage is stale: the Core's stats "
+            f"could not be read {entry['misses']} checks in a row. The "
+            f"relay-time cap is still enforced; numbers in the panel may "
+            f"lag until the Core responds.",
+            level="warn",
+        )
+    if _STALE_STOP_MINUTES > 0:
+        blind = (now - _aware(entry["first_miss"])).total_seconds() / 60.0
+        if blind >= _STALE_STOP_MINUTES:
+            try:
+                await deploy_svc.stop_instance(pool, instance_id)
+                owner = await pool.fetchrow(
+                    "SELECT user_id FROM instances WHERE id = $1", instance_id)
+                await _activity(
+                    pool, str(owner["user_id"]) if owner else None, instance_id,
+                    f"Instance '{name}' stopped — volume accounting stayed "
+                    f"unreachable for {_STALE_STOP_MINUTES:.0f} minutes "
+                    f"(EMUNEL_VOLUME_STALE_STOP_MINUTES)",
+                    level="warn",
+                )
+                _stale.pop(instance_id, None)
+            except Exception as exc:
+                log.warning("stale-stop failed for %s: %s", instance_id[:8], exc)
 
 
 async def enforcement_loop(pool) -> None:

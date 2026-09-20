@@ -325,6 +325,13 @@ class RuntimeStats:
         self.started_at = time.time()
         self.hourly: defaultdict = defaultdict(int)
         self.errors: deque = deque(maxlen=50)
+        # Instance-wide lifetime cap (0 = unlimited). Set by the Console
+        # through /core/api/quota as an ABSOLUTE lifetime-total ceiling so
+        # the per-instance volume limit is enforced at relay time — inside
+        # the same chokepoint as the per-link quota — instead of only by
+        # the Console's polling loop (which can go blind under load).
+        self.instance_cap_bytes = 0
+        self.instance_cap_hits = 0
 
     def add_traffic(self, n: int) -> None:
         self.total_bytes += n
@@ -378,6 +385,7 @@ class StateStore:
             except TypeError:
                 continue
         stats.total_bytes = int(raw.get("total_bytes", 0))
+        stats.instance_cap_bytes = max(0, int(raw.get("instance_cap_bytes") or 0))
         for key, value in (raw.get("hourly") or {}).items():
             stats.hourly[key] = int(value)
         log.info("state loaded: %d links", links.size())
@@ -390,6 +398,7 @@ class StateStore:
                     "version": STATE_VERSION,
                     "saved_at": _utcnow().isoformat(),
                     "total_bytes": stats.total_bytes,
+                    "instance_cap_bytes": stats.instance_cap_bytes,
                     "hourly": dict(stats.hourly),
                     "links": [
                         {slot: getattr(link, slot) for slot in Link.__slots__}

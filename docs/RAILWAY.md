@@ -146,3 +146,66 @@ off it launches the plain `emunel_core` exactly as before.
 * Subscription feeds: `?fmt=singbox` contains the `emunel-direct` route
   rules; `?fmt=clash` contains `DOMAIN-SUFFIX,ir,DIRECT`.
 * CLI (local clone): `python engine_manager.py doctor && python engine_manager.py selftest`.
+
+## Bypass — SNI Spoofing & REALITY (admin tab)
+
+The **Bypass** tab (admin) holds the Iran-bypass tooling. Nothing here
+changes the proxy Core or the gateway.
+
+### SNI Spoofing (client-side, panel-served)
+
+Spoofing executes on the user's **device**, not on Railway. The panel
+generates the profile (method / fragment strategy / delay / TTL / SNI pool)
+and serves a single-file Python helper (Download button) that the user runs
+next to their client:
+
+```bash
+python3 emunel_sni_helper.py --connect <your-emunel-domain>:443 \
+    --method combined --strategy sni_split --delay 0.1 --ttl 1
+# then point the browser / proxy client at 127.0.0.1:40443
+```
+
+No env vars required; everything is editable in the tab and persisted with
+the engine state (on the `/data` volume).
+
+### REALITY — generating (zero config) vs running (TCP Proxy)
+
+Generating keys and client/server configs works out of the box on any
+plan: **Bypass → REALITY → Generate** gives a `vless://` link
+(`security=reality`, RAW/XHTTP/gRPC) plus the inbound JSON for your own
+Xray server.
+
+To also RUN the VLESS+REALITY listener inside this deployment:
+
+1. Provide an Xray binary the container can read (e.g. place it on the
+   volume at `/data/xray/xray`) and set:
+
+   ```
+   EMUNEL_XRAY_BINARY=/data/xray/xray
+   EMUNEL_XRAY_SHA256=<sha256 of that binary>
+   EMUNEL_REALITY_LISTEN_PORT=8443
+   ```
+
+   The panel never downloads Xray; the digest pin is mandatory and a
+   mismatch is refused (same provenance rule as the VMess runtime).
+
+2. Expose the listener: **Settings → Networking → TCP Proxy → target port
+   `8443`**. Railway gives you a public `host:port`; if that public port
+   differs from 8443, also set `EMUNEL_REALITY_PUBLIC_PORT` so generated
+   links carry the right port.
+
+3. Bypass → REALITY → **Start runtime** (or restart via the button). The
+   status card turns Running; core clients connect with the generated
+   `vless://` link.
+
+Why a TCP proxy: Railway's normal HTTPS domain terminates HTTP/2 and
+cannot pass raw REALITY/gRPC; the TCP Proxy forwards the raw stream.
+On the free/hobby plan attach the `/data` volume first (Xray binary +
+engine state live there).
+
+### Iran target guidance
+
+Prefer domestic heavy-traffic targets the ISP cannot block wholesale —
+`blubank.com`, `divar.ir`, `snapp.ir`. Avoid `google.com` /
+`microsoft.com` (censor-monitored). REALITY works with RAW, XHTTP and
+gRPC transports only.

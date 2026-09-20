@@ -10,6 +10,18 @@ on mutations) and are additive: the existing /api/* surface is untouched.
   POST /api/engines/{name}/disable      hot-disable an engine
   GET  /api/engines/logs?name=&limit=   per-engine recent log lines
   POST /api/engines/selftest            passthrough + codec self-checks
+
+  GET  /api/engines/sni/status          bypass profile + metrics + helper usage
+  POST /api/engines/sni/config          update the profile (key-presence)
+  POST /api/engines/sni/restart         full reload (env + persisted profile)
+  POST /api/engines/sni/test            server-side fragment-plan proof
+  GET  /api/engines/sni/helper          the client-side helper script text
+
+  GET  /api/engines/reality/status      profile + keypair + runtime state
+  POST /api/engines/reality/config      update the profile (key-presence)
+  POST /api/engines/reality/keys        generate a fresh X25519 keypair
+  POST /api/engines/reality/restart     reload keys/env + cycle the runtime
+  POST /api/engines/reality/generate    inbound + outbound + vless:// link
 """
 from __future__ import annotations
 
@@ -87,6 +99,154 @@ def build_router(manager) -> APIRouter:
         payload["cores"] = await _core_engine_status(request)
         payload["api"] = {"version": 1}
         return payload
+
+    # ---- SNI Spoofing (bypass profile generator + client helper) ------------
+    def _engine(name: str):
+        engine = manager.engines.get(name)
+        if engine is None or not engine.status.active:
+            from fastapi import HTTPException
+
+            reason = engine.status.reason if engine is not None else "not running"
+            raise HTTPException(
+                status_code=503,
+                detail=f"{name} engine is not active: {reason}")
+        return engine
+
+    @router.get("/sni/status")
+    async def sni_status(request: Request, _=None):
+        await _admin(request)
+        engine = _engine("SNISpoof")
+        return {
+            "profile": engine.defaults(),
+            "metrics": engine.snapshot_metrics(),
+            "helper_usage": engine.helper_usage(),
+            "methods": ["fragment", "fake_sni", "combined"],
+            "strategies": ["sni_split", "half", "multi", "tls_record_frag"],
+        }
+
+    @router.post("/sni/config")
+    async def sni_config(request: Request, _=None):
+        await _admin(request)
+        engine = _engine("SNISpoof")
+        body = await request.json()
+        try:
+            profile = engine.set_profile(body)
+        except ValueError as exc:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "profile": profile}
+
+    @router.post("/sni/restart")
+    async def sni_restart(request: Request, _=None):
+        await _admin(request)
+        # full manager cycle: stop -> re-activate (re-reads env + persisted profile)
+        await manager.set_engine_enabled("SNISpoof", False)
+        ok, message = await manager.set_engine_enabled("SNISpoof", True)
+        return {"ok": ok, "message": message or "SNI profile generator reloaded"}
+
+    @router.post("/sni/test")
+    async def sni_test(request: Request, _=None):
+        await _admin(request)
+        engine = _engine("SNISpoof")
+        return engine.run_test()
+
+    @router.get("/sni/helper")
+    async def sni_helper(request: Request, download: int = 0, _=None):
+        await _admin(request)
+        engine = _engine("SNISpoof")
+        source = engine.helper_source()
+        headers = {"Cache-Control": "no-store"}
+        if download:
+            headers["Content-Disposition"] = 'attachment; filename="emunel_sni_helper.py"'
+        from fastapi import Response
+
+        return Response(content=source, media_type="text/plain; charset=utf-8",
+                        headers=headers)
+
+    # ---- REALITY (keypair + config generator + optional runtime) ------------
+    @router.get("/reality/status")
+    async def reality_status(request: Request, _=None):
+        await _admin(request)
+        engine = _engine("Reality")
+        public = engine.active_public_key()
+        return {
+            "profile": engine.defaults(),
+            "public_key": public,
+            "keypair_present": bool(public),
+            "client_uuid": engine.active_client_uuid(),
+            "runtime": {
+                "configured": engine.runtime_configured(),
+                "running": engine.runtime_running(),
+                "listen": (f"{engine.cfg.reality_listen_host}:"
+                           f"{engine.profile['listen_port']}"),
+                "xray_binary": engine.cfg.xray_binary or "",
+                "how_to_enable": "install an Xray release, set EMUNEL_XRAY_BINARY "
+                                  "(absolute path) + EMUNEL_XRAY_SHA256 (digest), "
+                                  "expose EMUNEL_REALITY_LISTEN_PORT via a Railway "
+                                  "TCP Proxy — see docs/RAILWAY.md",
+            },
+            "metrics": engine.snapshot_metrics(),
+            "transports": ["raw", "xhttp", "grpc"],
+        }
+
+    @router.post("/reality/config")
+    async def reality_config(request: Request, _=None):
+        await _admin(request)
+        engine = _engine("Reality")
+        body = await request.json()
+        try:
+            profile = engine.set_profile(body)
+        except ValueError as exc:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "profile": profile}
+
+    @router.post("/reality/keys")
+    async def reality_keys(request: Request, _=None):
+        await _admin(request)
+        engine = _engine("Reality")
+        return engine.generate_keys()
+
+    @router.post("/reality/restart")
+    async def reality_restart(request: Request, _=None):
+        await _admin(request)
+        # full manager cycle: stops any running Xray runtime, re-reads env
+        # (keys, binary pin) and starts the runtime again when configured
+        await manager.set_engine_enabled("Reality", False)
+        ok, message = await manager.set_engine_enabled("Reality", True)
+        engine = manager.engines.get("Reality")
+        runtime = {"running": bool(engine and engine.runtime_running()),
+                   "configured": bool(engine and engine.runtime_configured())} \
+            if engine else {"running": False, "configured": False}
+        return {"ok": ok, "message": message or "REALITY engine reloaded",
+                "runtime": runtime}
+
+    @router.post("/reality/generate")
+    async def reality_generate(request: Request, _=None):
+        """Build inbound + outbound + vless:// link for the asking client.
+        Body: {transport?: raw|xhttp|grpc, host?: public address (default
+        request Host), port?: override the listen port}."""
+        await _admin(request)
+        engine = _engine("Reality")
+        body = await request.json() if request.headers.get("content-type") else {}
+        address = str(body.get("host") or request.headers.get("host") or "").split(":")[0]
+        if not address:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail="host required (body or Host header)")
+        transport = str(body.get("transport") or "raw")
+        try:
+            port = int(body.get("port") or 0) or None
+        except (TypeError, ValueError):
+            port = None
+        try:
+            return engine.generate_configs(address=address, transport=transport, port=port)
+        except ValueError as exc:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.post("/{name}/enable")
     async def engines_enable(name: str, request: Request, _=None):

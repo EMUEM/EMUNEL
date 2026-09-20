@@ -110,7 +110,7 @@ def main() -> int:
         except ValueError:
             matrix = {}
         names = {e["name"]: e for e in matrix.get("engines", [])}
-        check("engine matrix returned (12 engines)", len(names) == 12,
+        check("engine matrix returned (14 engines)", len(names) == 14,
               f"got {sorted(names)}")
         check("Coalesce active by default", names.get("Coalesce", {}).get("active") is True)
         check("Morph inactive with honest reason",

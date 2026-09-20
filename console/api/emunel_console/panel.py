@@ -219,6 +219,7 @@ function ic(n){var p={dash:'<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h
 plus:'<path d="M12 5v14M5 12h14"/>',gear:'<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/>',
 menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
 eng:'<path d="M3 12h3.5l2.5-7 4 14 2.5-7H21"/>',
+byp:'<path d="M12 3l7 3v5c0 4.5-3 7.7-7 9-4-1.3-7-4.5-7-9V6z"/><path d="M13 7l-3.2 4.6h2.4l-2 4.8 4.3-5.8h-2.3z"/>',
 vol:'<path d="M12 3v18M8 7v10M16 7v10M20 10v4M4 10v4"/>',
 gh:'<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" fill="currentColor" stroke="none"/>',
 tg:'<path d="M21.9 4.6 18.9 19c-.2 1-.8 1.2-1.7.8l-4.6-3.4-2.2 2.1c-.3.3-.5.5-1 .5l.4-4.7L18.6 6c.4-.3-.1-.5-.6-.2L7.3 12.4l-4.3-1.4c-.9-.3-.9-.9.2-1.3L20.7 3.3c.8-.3 1.5.2 1.2 1.3Z" fill="currentColor" stroke="none"/>'};
@@ -241,7 +242,8 @@ function shell(nav){
     '<button class="ni '+(nav==="dash"?"act":"")+'" data-nav="dash">'+ic("dash")+' Dashboard</button>'+
     '<button class="ni '+(nav==="new"?"act":"")+'" data-nav="new">'+ic("plus")+' Create Instance</button>'+
     (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+' Admin</button>'+
-      '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+' Engines</button>':"")+
+      '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+' Engines</button>'+
+      '<button class="ni '+(nav==="bypass"?"act":"")+'" data-nav="bypass">'+ic("byp")+' Bypass</button>':"")+
     (LINKS.github?'<a class="ni" href="'+LINKS.github+'" target="_blank" rel="noopener">'+ic("gh")+' GitHub</a>':"")+
     (LINKS.telegram?'<a class="ni" href="'+esc(LINKS.telegram)+'" target="_blank" rel="noopener">'+ic("tg")+' Telegram</a>':"")+
     '<div style="padding:6px 8px"><span class="free"><span class="fdot"></span>Free</span></div>'+
@@ -255,7 +257,8 @@ function shell(nav){
     '<nav class="bnav"><button class="ni '+(nav==="dash"?"act":"")+'" data-nav="dash">'+ic("dash")+'<span>Home</span></button>'+
     '<button class="ni '+(nav==="new"?"act":"")+'" data-nav="new">'+ic("plus")+'<span>Create</span></button>'+
     (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+'<span>Admin</span></button>'+
-      '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+'<span>Engines</span></button>':"")+
+      '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+'<span>Engines</span></button>'+
+      '<button class="ni '+(nav==="bypass"?"act":"")+'" data-nav="bypass">'+ic("byp")+'<span>Bypass</span></button>':"")+
     '</nav></div></div>';
   var lg=$("#lg");if(lg)lg.onclick=logout;
   var lgm=$("#lgm");if(lgm)lgm.onclick=logout;
@@ -268,7 +271,7 @@ function shell(nav){
     b.onclick=function(){window.__closeDrawer();nav_(b.dataset.nav)}});
 }
 function nav_(name){stopPoll();setCleanup(null);
-  if(name==="dash")viewDash();else if(name==="new")viewWizard();else if(name==="engines")viewEngines();else if(name==="admin")viewAdmin()}
+  if(name==="dash")viewDash();else if(name==="new")viewWizard();else if(name==="engines")viewEngines();else if(name==="bypass")viewBypass();else if(name==="admin")viewAdmin()}
 function logout(){api("POST","/auth/logout").then(function(){render()})}
 function closeDrawer(){var w=window.__closeDrawer;if(w)w()}
 // ───────────────────────────── login ─────────────────────────────
@@ -861,6 +864,162 @@ function viewEngines(){
     .catch(function(e){b.disabled=false;toast(e.message,"err")})};
   load();
   pollTimer=every(20000,load);
+}
+// ───────────────────────────── bypass (SNI + REALITY) ─────────────────────────────
+function viewBypass(){
+  shell("bypass");
+  var v=$("#view");
+  v.innerHTML='<div class="ph"><div><h1>Bypass</h1>'+
+    '<div class="sub">Iran-bypass tooling — SNI Spoofing runs on client devices through the downloadable helper; REALITY keys and configs are generated here and can run on a pinned Xray runtime. The proxy Core is never modified.</div></div>'+
+    '<div class="ha"><button class="btn sm pri" id="bp-rf">Refresh</button></div></div>'+
+    '<div id="bp-w"></div><div class="sgs" id="bp-s"></div>'+
+    '<div class="card" id="bp-sni"></div><div class="card" style="margin-top:14px" id="bp-rea"></div>'+
+    '<div class="card" style="margin-top:14px" id="bp-run"></div>';
+  function bpSg(l,val,c){var s=String(val);
+    return '<div class="sg"><div class="l">'+l+'</div><div class="v" style="font-size:'+(s.length>18?"13px":"18px")+';'+(c?"color:"+c:"")+'">'+esc(s)+"</div></div>"}
+  function bpChip(ok,label){return '<span class="chip" style="color:'+(ok?"var(--grn)":"var(--fnt)")+';border-color:'+(ok?"var(--grn)":"var(--bd2)")+'">'+(label||(ok?"Active":"Inactive"))+"</span>"}
+  function bpModal(title,body,mono){
+    var ov=document.createElement("div");ov.className="qr-ov";
+    ov.innerHTML='<div class="qr-c" style="max-width:620px;width:92vw"><b style="font-size:13px">'+esc(title)+'</b>'+
+      '<pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:56vh;overflow:auto;font-size:11.5px;line-height:1.55;text-align:left;margin:12px 0;color:var(--dim)'+(mono===false?"":"")+'">'+esc(body||"—")+"</pre>"+
+      '<div class="row" style="gap:6px"><button class="btn sm" id="bpc">Copy</button><button class="btn sm pri" id="bpx">Close</button></div></div>';
+    document.body.appendChild(ov);
+    ov.onclick=function(e){if(e.target===ov)ov.remove()};
+    $("#bpx",ov).onclick=function(){ov.remove()};
+    $("#bpc",ov).onclick=function(){
+      try{navigator.clipboard.writeText(body||"");toast("Copied","ok")}catch(e){toast("Copy failed","err")}};
+    return ov}
+  function loadSni(){
+    api("GET","/api/engines/sni/status").then(function(d){
+      var p=d.profile||{};
+      $("#bp-sni").innerHTML='<div class="row" style="justify-content:space-between;align-items:flex-start"><div><h3 style="margin:0">SNI Spoofing — client-side bypass profile</h3>'+
+        '<p class="ftx" style="font-size:11.5px;margin:4px 0 0">Spoofing executes on the user device: the panel generates the profile and serves the helper script. Point the client at 127.0.0.1:'+esc(p.listen_port||40443)+'.</p></div>'+bpChip(true,"Generator")+"</div>"+
+        '<div class="kv" style="margin-top:12px">'+
+        '<div class="it"><div class="k">Method</div><div class="v mono">'+esc(p.method||"—")+'</div></div>'+
+        '<div class="it"><div class="k">Fragment strategy</div><div class="v mono">'+esc(p.fragment_strategy||"—")+'</div></div>'+
+        '<div class="it"><div class="k">Delay</div><div class="v mono">'+esc(p.fragment_delay||0)+'s</div></div>'+
+        '<div class="it"><div class="k">TTL trick</div><div class="v mono">'+(p.ttl_trick?("ttl="+esc(p.ttl_value)):"off")+'</div></div>'+
+        '<div class="it"><div class="k">Fake SNI</div><div class="v mono">'+esc(p.fake_sni||"—")+'</div></div>'+
+        '<div class="it"><div class="k">SNI pool</div><div class="v mono">'+((p.sni_pool||[]).length+" hosts")+'</div></div></div>'+
+        '<details style="margin-top:10px"><summary class="ftx" style="font-size:11.5px;cursor:pointer">Edit profile</summary>'+
+        '<div class="kv" style="margin-top:8px">'+
+        '<div class="it"><div class="k">Method</div><select id="bp-m" class="inp" style="width:100%">'+["fragment","fake_sni","combined"].map(function(m){return '<option '+(m===p.method?"selected":"")+'>'+m+"</option>"}).join("")+"</select></div>"+
+        '<div class="it"><div class="k">Strategy</div><select id="bp-st" class="inp" style="width:100%">'+["sni_split","half","multi","tls_record_frag"].map(function(m){return '<option '+(m===p.fragment_strategy?"selected":"")+'>'+m+"</option>"}).join("")+"</select></div>"+
+        '<div class="it"><div class="k">Delay (s)</div><input id="bp-d" class="inp mono" style="width:100%" value="'+esc(p.fragment_delay||0)+'"></div>'+
+        '<div class="it"><div class="k">TTL (0-8, 0=off)</div><input id="bp-t" class="inp mono" style="width:100%" value="'+esc(p.ttl_value||1)+'"></div>'+
+        '<div class="it" style="grid-column:1/-1"><div class="k">Fake SNI</div><input id="bp-f" class="inp mono" style="width:100%" value="'+esc(p.fake_sni||"")+'"></div>'+
+        '<div class="it" style="grid-column:1/-1"><div class="k">SNI pool (comma separated)</div><input id="bp-p" class="inp mono" style="width:100%" value="'+esc((p.sni_pool||[]).join(","))+'"></div></div>'+
+        '<div class="row" style="gap:6px;margin-top:10px"><button class="btn sm pri" id="bp-save">Save profile</button><button class="btn sm" id="bp-test">Run test</button><button class="btn sm" id="bp-dl">Download helper</button><button class="btn sm" id="bp-cmd">Show usage</button></div></details>';
+      $("#bp-save").onclick=function(){
+        var b=$("#bp-save");b.disabled=true;
+        api("POST","/api/engines/sni/config",{
+          method:$("#bp-m").value,strategy:$("#bp-st").value,
+          delay:parseFloat($("#bp-d").value)||0,
+          ttl_value:parseInt($("#bp-t").value,10)||0,
+          fake_sni:$("#bp-f").value,
+          sni_pool:$("#bp-p").value
+        }).then(function(r){b.disabled=false;toast("Profile saved","ok");loadSni()})
+        .catch(function(e){b.disabled=false;toast(e.message,"err")})};
+      $("#bp-test").onclick=function(){
+        var b=$("#bp-test");b.disabled=true;
+        api("POST","/api/engines/sni/test").then(function(r){
+          b.disabled=false;
+          bpModal("SNI bypass plan test — "+(r.ok?"valid":"INVALID"),JSON.stringify(r,null,2))})
+        .catch(function(e){b.disabled=false;toast(e.message,"err")})};
+      $("#bp-dl").onclick=function(){
+        fetch("/api/engines/sni/helper?download=1",{credentials:"same-origin"})
+          .then(function(r){if(!r.ok)throw new Error("download failed ("+r.status+")");return r.text()})
+          .then(function(text){
+            var blob=new Blob([text],{type:"text/x-python"}),a=document.createElement("a");
+            a.href=URL.createObjectURL(blob);a.download="emunel_sni_helper.py";a.click();
+            setTimeout(function(){URL.revokeObjectURL(a.href)},4000);
+            toast("Helper downloaded — run it next to your client","ok")})
+          .catch(function(e){toast(e.message,"err")})};
+      $("#bp-cmd").onclick=function(){
+        api("GET","/api/engines/sni/status").then(function(d2){
+          bpModal("Helper usage (client device)","python3 emunel_sni_helper.py "+d2.helper_usage.replace(/^python\S*\s*/,"")+
+            "\n\nthen point your browser / proxy client at 127.0.0.1:"+(d2.profile||{}).listen_port)})};
+    }).catch(function(e){
+      $("#bp-sni").innerHTML='<h3 style="margin:0 0 6px">SNI Spoofing</h3><p class="mut" style="font-size:12.5px">'+esc(e.message)+"</p>"});
+  }
+  function loadReality(){
+    api("GET","/api/engines/reality/status").then(function(d){
+      var p=d.profile||{},rt=d.runtime||{};
+      $("#bp-rea").innerHTML='<div class="row" style="justify-content:space-between;align-items:flex-start"><div><h3 style="margin:0">REALITY — TLS camouflage</h3>'+
+        '<p class="ftx" style="font-size:11.5px;margin:4px 0 0">The client borrows a real target handshake (e.g. blubank.com); the server proves itself with an X25519 keypair. Keys and configs are generated here.</p></div>'+
+        (d.keypair_present?bpChip(true,"Keys ready"):bpChip(false,"No keypair"))+"</div>"+
+        '<div class="kv" style="margin-top:12px">'+
+        '<div class="it"><div class="k">Target</div><div class="v mono">'+esc(p.target||"—")+'</div></div>'+
+        '<div class="it"><div class="k">XHTTP target</div><div class="v mono">'+esc(p.xhttp_target||"—")+'</div></div>'+
+        '<div class="it"><div class="k">Server names</div><div class="v mono" style="font-size:10.5px">'+esc((p.server_names||[]).join(", ")||"—")+'</div></div>'+
+        '<div class="it"><div class="k">Fingerprint</div><div class="v mono">'+esc(p.fingerprint||"—")+'</div></div>'+
+        '<div class="it"><div class="k">Listen port</div><div class="v mono">'+esc(p.listen_port||"—")+'</div></div>'+
+        '<div class="it" style="grid-column:1/-1"><div class="k">Public key (pbk)</div><div class="v mono" style="font-size:10.5px;overflow-wrap:anywhere">'+esc(d.public_key||"—")+"</div></div></div>"+
+        '<details style="margin-top:10px"><summary class="ftx" style="font-size:11.5px;cursor:pointer">Edit profile</summary>'+
+        '<div class="kv" style="margin-top:8px">'+
+        '<div class="it"><div class="k">Target (host:port)</div><input id="bp-rt" class="inp mono" style="width:100%" value="'+esc(p.target||"")+'"></div>'+
+        '<div class="it"><div class="k">XHTTP target</div><input id="bp-rx" class="inp mono" style="width:100%" value="'+esc(p.xhttp_target||"")+'"></div>'+
+        '<div class="it" style="grid-column:1/-1"><div class="k">Server names (comma separated)</div><input id="bp-rn" class="inp mono" style="width:100%" value="'+esc((p.server_names||[]).join(","))+'"></div></div>'+
+        '<div class="row" style="gap:6px;margin-top:10px"><button class="btn sm pri" id="bp-rsave">Save profile</button><button class="btn sm dng" id="bp-keys">Generate new keypair</button>'+
+        '<span class="ftx" style="font-size:11px;align-self:center">Iran tip: prefer domestic heavy-traffic targets (banks, marketplaces); avoid google/microsoft.</span></div></details>'+
+        '<div class="row" style="gap:6px;margin-top:12px"><span class="ftx" style="font-size:10px;letter-spacing:1px;align-self:center">GENERATE CLIENT CONFIG</span>'+
+        ["raw","xhttp","grpc"].map(function(t){return '<button class="btn sm" data-gen="'+t+'">'+t.toUpperCase()+"</button>"}).join("")+"</div>";
+      $("#bp-rsave").onclick=function(){
+        var b=$("#bp-rsave");b.disabled=true;
+        api("POST","/api/engines/reality/config",{
+          target:$("#bp-rt").value,xhttp_target:$("#bp-rx").value,
+          server_names:$("#bp-rn").value
+        }).then(function(r){b.disabled=false;toast("REALITY profile saved","ok");loadReality()})
+        .catch(function(e){b.disabled=false;toast(e.message,"err")})};
+      $("#bp-keys").onclick=function(){
+        var b=$("#bp-keys");b.disabled=true;
+        api("POST","/api/engines/reality/keys").then(function(r){
+          b.disabled=false;loadReality();
+          bpModal("New X25519 keypair — private key shown ONCE",
+            "private_key: "+r.private_key+"\npublic_key:  "+r.public_key+"\nclient_uuid: "+r.client_uuid+
+            "\n\nStore the private key safely (env REALITY_PRIVATE_KEY or the engine state file). "+
+            "Existing clients must re-import the new public key.")})
+        .catch(function(e){b.disabled=false;toast(e.message,"err")})};
+      Array.prototype.forEach.call($("#bp-rea").querySelectorAll("[data-gen]"),function(btn){
+        btn.onclick=function(){
+          btn.disabled=true;
+          api("POST","/api/engines/reality/generate",{transport:btn.dataset.gen}).then(function(r){
+            btn.disabled=false;
+            bpModal("REALITY "+r.transport.toUpperCase()+" — client import",
+              r.share_url+"\n\n—— client outbound JSON ——\n"+JSON.stringify(r.outbound,null,2)+
+              "\n\n—— server inbound JSON (run on your Xray) ——\n"+JSON.stringify(r.inbound,null,2))})
+          .catch(function(e){btn.disabled=false;toast(e.message,"err")})}});
+      var runCard=$("#bp-run");
+      if(rt.configured){
+        runCard.innerHTML='<div class="row" style="justify-content:space-between;align-items:flex-start"><div><h3 style="margin:0">REALITY runtime (pinned Xray)</h3>'+
+          '<p class="ftx" style="font-size:11.5px;margin:4px 0 0">listener '+esc(rt.listen||"—")+' — expose it with a Railway TCP Proxy pointing at this port.</p></div>'+
+          (rt.running?bpChip(true,"Running"):bpChip(false,"Stopped"))+"</div>"+
+          '<div class="row" style="gap:6px;margin-top:12px"><button class="btn sm pri" id="bp-rr">'+(rt.running?"Restart runtime":"Start runtime")+'</button></div>';
+        $("#bp-rr").onclick=function(){
+          var b=$("#bp-rr");b.disabled=true;
+          api("POST","/api/engines/reality/restart").then(function(r){
+            b.disabled=false;toast(r.runtime&&r.runtime.running?"Runtime started":"Runtime not running — check engine logs","ok");loadReality()})
+          .catch(function(e){b.disabled=false;toast(e.message,"err")})};
+      }else{
+        runCard.innerHTML='<h3 style="margin:0 0 6px">REALITY runtime — not configured</h3>'+
+          '<p class="mut" style="font-size:12.5px;margin:0">Key and config generation work everywhere. To also RUN the VLESS+REALITY listener inside this deployment: install an Xray release, set <span class="mono">EMUNEL_XRAY_BINARY</span> (absolute path) + <span class="emunel mono">EMUNEL_XRAY_SHA256</span> (digest pin), expose <span class="mono">EMUNEL_REALITY_LISTEN_PORT</span> through a Railway TCP Proxy — full guide in <span class="mono">docs/RAILWAY.md</span>. Until then the buttons above generate everything you need for a self-hosted Xray.</p>';
+      }
+    }).catch(function(e){
+      $("#bp-rea").innerHTML='<h3 style="margin:0 0 6px">REALITY</h3><p class="mut" style="font-size:12.5px">'+esc(e.message)+"</p>";
+      $("#bp-run").innerHTML="";});
+  }
+  function loadHead(){
+    api("GET","/api/engines").then(function(d){
+      $("#bp-w").innerHTML=d.volume_warning?'<div class="card" style="border-color:var(--amb);margin-bottom:14px"><h3 style="margin:0 0 6px;color:var(--amb)">Engine state is not persisting</h3><p class="mut" style="margin:0;font-size:12.5px">'+esc(d.volume_warning)+"</p></div>":"";
+      var act=(d.engines||[]).filter(function(e){return /sni|reality/i.test(e.name)&&e.active});
+      $("#bp-s").innerHTML=bpSg("Bypass engines",act.length+" / 2",act.length?"var(--grn)":"")+
+        bpSg("Pipeline",((d.pipeline_order||[]).length)+" engines")+
+        bpSg("Engine data",d.data_dir||"—")+bpSg("Uptime",fmtUp(Math.round(d.uptime||0)));
+    }).catch(function(){$("#bp-s").innerHTML=""});
+  }
+  $("#bp-rf").onclick=function(){loadHead();loadSni();loadReality()};
+  loadHead();loadSni();loadReality();
+  pollTimer=every(20000,function(){loadHead();loadReality()});
 }
 // ───────────────────────────── boot ─────────────────────────────
 function render(){

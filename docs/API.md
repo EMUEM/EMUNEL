@@ -169,3 +169,41 @@ Management (bearer `EMUNEL_CORE_API_TOKEN`):
 | GET/POST | `/core/api/links` | List (no secrets) / create link |
 | PATCH/DELETE | `/core/api/links/{uuid}` | Update (label/quota/active/reset) / delete |
 | POST | `/core/api/state/flush` | Force persistence |
+
+## Bypass — SNI Spoofing & REALITY (admin session + CSRF)
+
+The Bypass engines expose their own namespace under `/api/engines/*`.
+All routes require an admin session (401 anonymous; CSRF header on POSTs
+like every other mutation).
+
+| Route | What it does |
+|---|---|
+| `GET /api/engines/sni/status` | the active bypass profile, metrics, helper usage line |
+| `POST /api/engines/sni/config` | update the profile (key-presence: only sent keys change; `400` on nonsense) |
+| `POST /api/engines/sni/restart` | full reload (env + persisted profile) |
+| `POST /api/engines/sni/test` | server-side proof of the fragment plan (parse → plan → stream preserved) |
+| `GET /api/engines/sni/helper` | the standalone client helper script (`?download=1` for attachment) |
+| `GET /api/engines/reality/status` | profile, active public key, client uuid, runtime state (honest when unconfigured) |
+| `POST /api/engines/reality/config` | update target / server names / fingerprint / short ids / listen port |
+| `POST /api/engines/reality/keys` | generate a fresh X25519 keypair — the private key is returned ONCE |
+| `POST /api/engines/reality/restart` | reload env/keys and cycle the pinned-Xray runtime |
+| `POST /api/engines/reality/generate` | `{transport: raw\|xhttp\|grpc}` → inbound + outbound JSON + `vless://` link |
+
+The SNI helper itself runs on the **client device** (it is downloaded and
+executed next to the proxy client); the panel never performs spoofing.
+The REALITY runtime requires `EMUNEL_XRAY_BINARY` + `EMUNEL_XRAY_SHA256`
+and a Railway TCP Proxy on `EMUNEL_REALITY_LISTEN_PORT` — see
+`engines/README.md`.
+
+## Volume enforcement — relay-time (the AHB-bypass closure)
+
+The instance volume limit is now enforced by the **Core at relay time**
+(`PUT /core/api/quota`, guarded by the instance's management token): the
+Console pushes `baseline + limit` as an absolute lifetime cap and the
+Core's QuotaGate cuts traffic the moment the lifetime counter reaches it —
+including new connections — with only a bounded one-batch overshoot. The
+Console's 45 s loop remains as the second line (reconciling drifted caps,
+stopping capped instances, alerting on unreachable stats via
+`EMUNEL_VOLUME_STALE_ALERT_MISSES` / `EMUNEL_VOLUME_STALE_STOP_MINUTES`)
+and repairs core-state regression so a wiped state file can never
+silently renew a quota.

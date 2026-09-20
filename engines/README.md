@@ -53,6 +53,8 @@ DomainFronting, PortHopping`.
 | **SNIRotation** | off | console | rotates the connect domain across `EMUNEL_SNI_DOMAINS` (≥2 domains attached to the deployment). Inactive with a reason otherwise. |
 | **DomainFronting** | off | console | rewrites configs to SNI=domestic front + Host=real backend. Requires the self-hosted Caddy edge (see below). |
 | **PortHopping** | off | console | rotates the connect port across `EMUNEL_PORT_HOPPING_PORTS`. Railway exposes one public port — inactive with a reason there. |
+| **SNISpoof** | on | console | SNI-spoofing PROFILE GENERATOR + client helper distributor (see below). The spoofing itself runs on the user's device — a panel on Railway is already past the DPI. |
+| **Reality** | on | console | X25519 keypairs, VLESS+REALITY inbound/outbound config generation (RAW/XHTTP/gRPC) and vless:// share links; optional pinned-Xray runtime (see below). |
 
 Every inactive engine shows WHY in the panel (Engine Settings → reason line).
 
@@ -76,6 +78,59 @@ python engine_manager.py list      # registry
   env caps (`EMUNEL_ENGINE_MAX_OPS_PER_SEC`, buffer ceilings, pool
   sizes). No external database, no Redis, no background CPU burn.
 * **PORT** is read from the environment everywhere; nothing is hardcoded.
+
+## Bypass tab — SNI Spoofing + REALITY (how they really work)
+
+The **Bypass** tab (admin only) manages two Iran-bypass engines. Both are
+honest about what a server can and cannot do.
+
+### SNI Spoofing — client side, panel-served
+
+SNI spoofing executes on the CLIENT device, never on Railway — by the time
+traffic reaches the panel it has already passed the censor. The panel is
+the profile generator and helper distributor:
+
+1. **Profile** (`/api/engines/sni/*`): method (`fragment` / `fake_sni` /
+   `combined`), fragment strategy (`sni_split` / `half` / `multi` /
+   `tls_record_frag`), inter-fragment delay, TTL trick value, fake SNI and
+   the allowed-SNI pool. Persisted in engine state, editable from the
+   Bypass tab.
+2. **Helper** (Download button): a single-file stdlib-only Python script
+   (`emunel_sni_helper.py`) that runs next to the proxy client. It listens
+   locally (default `127.0.0.1:40443`), intercepts the ClientHello, sends a
+   synthetic allowed-SNI hello on a low-TTL connection (dies mid-path; DPI
+   sees it, the real server never does), fragments the real ClientHello per
+   the strategy, then relays both directions. No raw sockets, no admin
+   rights — `IP_TTL` on a normal TCP socket.
+3. **Test** button proves the planner server-side (parse → plan → stream
+   preservation) so a broken profile is caught before it ships to clients.
+
+### REALITY — keys + configs always, optional pinned runtime
+
+REALITY borrows a real target site's TLS handshake as camouflage. The panel
+ALWAYS provides: X25519 keypair generation (key format matches
+`xray x25519`), full inbound (server) + outbound (client) JSON for
+RAW / XHTTP / gRPC, and an importable `vless://` link with
+`security=reality&pbk=…&sid=…&spx=…`.
+
+Optionally the engine can RUN the server side inside the container — one
+VLESS+REALITY listener on `EMUNEL_REALITY_LISTEN_PORT` — under the same
+provenance rule as the Core's VMess runtime:
+
+```bash
+# install an Xray release somewhere the container can read it, then set:
+EMUNEL_XRAY_BINARY=/data/xray/xray          # absolute path
+EMUNEL_XRAY_SHA256=<sha256 of the binary>   # digest pin
+EMUNEL_REALITY_LISTEN_PORT=8443             # expose via a Railway TCP Proxy
+```
+
+The binary is NEVER downloaded by the panel; a wrong digest is refused.
+Expose the port through Railway: Settings → Networking → TCP Proxy → target
+port `8443`; clients connect to the host:port the TCP proxy gives you
+(the generated links use `EMUNEL_REALITY_PUBLIC_PORT` when it differs
+from the listen port). Iran guidance: prefer domestic heavy-traffic
+targets (blubank.com, divar.ir, snapp.ir); avoid google/microsoft
+(censor-monitored).
 
 ## Domain fronting on a self-hosted edge
 

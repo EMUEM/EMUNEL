@@ -399,6 +399,8 @@ async def _reconcile_links(pool: asyncpg.Pool, deployment_id: str,
                           instance_id: str) -> None:
     """After health: make the Core match the Console DB — restore links the
     Core lost (fresh state file / new service) and re-apply drifted policies.
+    Also pushes the instance volume cap so relay-time enforcement starts
+    with the deployment, not only on the next volume loop cycle.
     Best-effort; never fails a healthy deployment."""
     try:
         from . import links as links_svc
@@ -406,6 +408,13 @@ async def _reconcile_links(pool: asyncpg.Pool, deployment_id: str,
         await links_svc.reconcile_after_deploy(pool, instance_id, None)
     except Exception as exc:
         await _log(pool, deployment_id, f"link reconcile skipped: {exc}", "warn")
+    try:
+        from . import volume as volume_svc
+
+        if await volume_svc.push_core_cap(pool, instance_id):
+            await _log(pool, deployment_id, "volume cap pushed to Core (relay-time)", "ok")
+    except Exception as exc:
+        await _log(pool, deployment_id, f"volume cap push skipped: {exc}", "warn")
 
 
 # ---------------------------------------------------------------------------

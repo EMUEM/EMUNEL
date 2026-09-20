@@ -62,6 +62,15 @@ class QuotaGate:
         self.rate_ewma = 0.0
 
     async def _account(self, n: int) -> bool:
+        # Instance-wide lifetime cap (Console's volume limit, pushed via
+        # /core/api/quota). Checked BEFORE counting so the lifetime total
+        # never runs past cap + one in-flight batch; denies exactly like a
+        # per-link quota would (relay closes with the standard quota reason).
+        cap = int(getattr(self.ctx.stats, "instance_cap_bytes", 0) or 0)
+        if cap > 0 and self.ctx.stats.total_bytes >= cap:
+            self.ctx.stats.instance_cap_hits = (
+                int(getattr(self.ctx.stats, "instance_cap_hits", 0)) + 1)
+            return False
         self.ctx.stats.add_traffic(n)
         if self.conn_id:
             self.ctx.connections.add_bytes(self.conn_id, n)
@@ -78,8 +87,22 @@ class QuotaGate:
             return
         await self.ctx.speed.consume(self.uuid, rate, n)
 
+    def _cap_reached(self) -> bool:
+        """Instance-wide lifetime cap, already hit (0 = unlimited)."""
+        cap = int(getattr(self.ctx.stats, "instance_cap_bytes", 0) or 0)
+        return cap > 0 and self.ctx.stats.total_bytes >= cap
+
     async def add(self, nbytes: int) -> bool:
         if not self.ok:
+            return False
+        if self._cap_reached():
+            # checked BEFORE batching so a NEW connection opened after the
+            # cap is cut on its very first frame (in-flight connections are
+            # cut at their next batch boundary — the same bounded overshoot
+            # as the per-link quota)
+            self.ctx.stats.instance_cap_hits = (
+                int(getattr(self.ctx.stats, "instance_cap_hits", 0)) + 1)
+            self.ok = False
             return False
         self.pending += nbytes
         now = time.monotonic()

@@ -131,6 +131,8 @@ class EngineEnv:
     sni_on: bool = False
     fronting_on: bool = False
     porthop_on: bool = False
+    snispoof_on: bool = True
+    reality_on: bool = True
 
     # ── Coalescing ─────────────────────────────────────────────────────────
     coalesce_max_size: int = 16384             # MAX_COALESCE_SIZE
@@ -189,6 +191,34 @@ class EngineEnv:
     split_domains: list[str] = field(default_factory=list)
     split_ip_cidrs: list[str] = field(default_factory=list)
 
+    # SNI Spoofing (client-side bypass profile generator + helper)
+    sni_method: str = "combined"                 # SNI_METHOD: fragment|fake_sni|combined
+    sni_fragment_strategy: str = "sni_split"     # SNI_FRAGMENT_STRATEGY
+    sni_fragment_delay: float = 0.1               # SNI_FRAGMENT_DELAY (seconds)
+    sni_ttl_trick: bool = True                    # SNI_TTL_TRICK
+    sni_ttl_value: int = 1                        # SNI_TTL_VALUE (1-8)
+    sni_fake_sni: str = "www.microsoft.com"       # SNI_FAKE_SNI
+    sni_pool: list[str] = field(default_factory=list)   # SNI_POOL (csv)
+    sni_listen_port: int = 40443                   # SNI_LISTEN_PORT (helper default)
+    sni_max_conns: int = 256                      # EMUNEL_SNI_MAX_CONNS (helper bound)
+
+    # REALITY (keypair + config generator + optional pinned runtime)
+    reality_target: str = "blubank.com:443"       # REALITY_TARGET
+    reality_xhttp_target: str = "divar.ir:443"   # XHTTP_REALITY_TARGET
+    reality_server_names: list[str] = field(default_factory=list)  # REALITY_SERVER_NAMES
+    reality_fingerprint: str = "chrome"          # REALITY_FINGERPRINT
+    reality_short_ids: list[str] = field(default_factory=list)      # REALITY_SHORT_IDS
+    reality_spider_x: str = "/"                   # REALITY_SPIDER_X
+    reality_private_key: str = ""                # REALITY_PRIVATE_KEY (b64 x25519)
+    reality_public_key: str = ""                  # REALITY_PUBLIC_KEY
+    reality_listen_host: str = "0.0.0.0"          # EMUNEL_REALITY_LISTEN_HOST
+    reality_listen_port: int = 8443               # EMUNEL_REALITY_LISTEN_PORT
+    reality_public_port: int = 0                  # EMUNEL_REALITY_PUBLIC_PORT (0 = same)
+    reality_uuid: str = ""                        # REALITY_UUID (client uuid)
+    reality_flow: str = "xtls-rprx-vision"        # REALITY_FLOW
+    xray_binary: str = ""                          # EMUNEL_XRAY_BINARY (pinned runtime)
+    xray_sha256: str = ""                          # EMUNEL_XRAY_SHA256
+
     # ── runtime info (not env) ─────────────────────────────────────────────
     host: str = "console"                      # which process we run in
     explicit_off: set = field(default_factory=set)   # env kill-switches (EMUNEL_ENGINE_*_ENABLED=0)
@@ -203,7 +233,7 @@ class EngineEnv:
 # below is the execution order for the frame pipeline.
 DEFAULT_PIPELINE = ("Coalesce,Morph,Compress,PreConnect,FEC,Congestion,"
                    "SessionResumption,FakeHandshake,SplitTunnel,"
-                   "SNIRotation,DomainFronting,PortHopping")
+                   "SNIRotation,DomainFronting,PortHopping,SNISpoof,Reality")
 
 # engine NAME -> enable-flag env var (hot toggles may override a missing
 # default, but an explicit =0 in the environment is a hard kill-switch)
@@ -220,7 +250,12 @@ ENGINE_FLAG_VARS = {
     "SNIRotation": "EMUNEL_ENGINE_SNI_ROTATION_ENABLED",
     "DomainFronting": "EMUNEL_ENGINE_FRONTING_ENABLED",
     "PortHopping": "EMUNEL_ENGINE_PORT_HOPPING_ENABLED",
+    "SNISpoof": "EMUNEL_ENGINE_SNI_SPOOF_ENABLED",
+    "Reality": "EMUNEL_ENGINE_REALITY_ENABLED",
 }
+
+DEFAULT_SNI_POOL = "cdnjs.cloudflare.com,www.hcaptcha.com,auth.vercel.com,www.google.com"
+DEFAULT_REALITY_SHORT_IDS = ",0123456789abcdef"
 
 
 def parse_env(host: str = "console") -> EngineEnv:
@@ -249,6 +284,34 @@ def parse_env(host: str = "console") -> EngineEnv:
         sni_on=_bool("EMUNEL_ENGINE_SNI_ROTATION_ENABLED", False),
         fronting_on=_bool("EMUNEL_ENGINE_FRONTING_ENABLED", False),
         porthop_on=_bool("EMUNEL_ENGINE_PORT_HOPPING_ENABLED", False),
+        snispoof_on=_bool("EMUNEL_ENGINE_SNI_SPOOF_ENABLED", True),
+        reality_on=_bool("EMUNEL_ENGINE_REALITY_ENABLED", True),
+
+        sni_method=(_str("SNI_METHOD", "combined").strip().lower() or "combined"),
+        sni_fragment_strategy=(_str("SNI_FRAGMENT_STRATEGY", "sni_split").strip().lower() or "sni_split"),
+        sni_fragment_delay=min(2.0, max(0.0, _float("SNI_FRAGMENT_DELAY", 0.1))),
+        sni_ttl_trick=_bool("SNI_TTL_TRICK", True),
+        sni_ttl_value=min(8, max(1, _int("SNI_TTL_VALUE", 1))),
+        sni_fake_sni=_str("SNI_FAKE_SNI", "www.microsoft.com").strip() or "www.microsoft.com",
+        sni_pool=_csv("SNI_POOL", DEFAULT_SNI_POOL),
+        sni_listen_port=_int("SNI_LISTEN_PORT", 40443),
+        sni_max_conns=_int("EMUNEL_SNI_MAX_CONNS", 256),
+
+        reality_target=_str("REALITY_TARGET", "blubank.com:443").strip() or "blubank.com:443",
+        reality_xhttp_target=_str("XHTTP_REALITY_TARGET", "divar.ir:443").strip() or "divar.ir:443",
+        reality_server_names=_csv("REALITY_SERVER_NAMES", ""),
+        reality_fingerprint=_str("REALITY_FINGERPRINT", "chrome").strip().lower() or "chrome",
+        reality_short_ids=_csv("REALITY_SHORT_IDS", DEFAULT_REALITY_SHORT_IDS),
+        reality_spider_x=_str("REALITY_SPIDER_X", "/") or "/",
+        reality_private_key=_str("REALITY_PRIVATE_KEY", "").strip(),
+        reality_public_key=_str("REALITY_PUBLIC_KEY", "").strip(),
+        reality_listen_host=_str("EMUNEL_REALITY_LISTEN_HOST", "0.0.0.0").strip() or "0.0.0.0",
+        reality_listen_port=_int("EMUNEL_REALITY_LISTEN_PORT", 8443),
+        reality_public_port=_int("EMUNEL_REALITY_PUBLIC_PORT", 0),
+        reality_uuid=_str("REALITY_UUID", "").strip(),
+        reality_flow=_str("REALITY_FLOW", "xtls-rprx-vision").strip() or "xtls-rprx-vision",
+        xray_binary=_str("EMUNEL_XRAY_BINARY", "").strip(),
+        xray_sha256=_str("EMUNEL_XRAY_SHA256", "").strip(),
 
         coalesce_max_size=_int("MAX_COALESCE_SIZE", 16384),
         coalesce_timeout_ms=_int("COALESCE_TIMEOUT_MS", 8),
