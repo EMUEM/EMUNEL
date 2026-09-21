@@ -25,6 +25,8 @@ from ..chaos import ChaosEngine
 from ..mesh import MeshEngine
 from ..genetic import GeneticEngine
 from ..synergy import SynergyEngine
+# SNI Enhanced (stateful DPI evasion — flag-gated OFF by default)
+from ..sni_enhanced import SNIEnhancedEngine
 
 REGISTRY: dict[str, type] = {
     "Coalesce": CoalescingEngine,
@@ -47,6 +49,8 @@ REGISTRY: dict[str, type] = {
     "Mesh": MeshEngine,
     "Genetic": GeneticEngine,
     "Synergy": SynergyEngine,
+    # SNI Enhanced — SNI_ENHANCED_ENABLED (default false)
+    "SNIEnhanced": SNIEnhancedEngine,
 }
 
 __all__ = ["REGISTRY"]

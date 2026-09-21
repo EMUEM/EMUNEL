@@ -32,7 +32,6 @@ def wrap_console(console_app, manager=None):
         from .manager import EngineManager
 
         manager = EngineManager("console", cfg=cfg)
-
     # panel page (for probe-response comparison) — best effort
     panel_page: str | None = None
     try:
@@ -82,7 +81,22 @@ def wrap_console(console_app, manager=None):
     # 3. ASGI middleware around everything
     from .middleware import EnginesASGIMiddleware
 
-    return EnginesASGIMiddleware(console_app, manager, cfg, panel_page=panel_page)
+    app = EnginesASGIMiddleware(console_app, manager, cfg, panel_page=panel_page)
+
+    # 3b. HTTP response compression (OUTERMOST: compresses what the engines
+    # layer produced — panel page, assets, API JSON, subscription feeds).
+    # Inactive by default (env EMUNEL_HTTP_COMPRESSION or hot-enabling the
+    # Compress engine in Engine Settings); the data path (/i/*) is skipped
+    # hard — binary proxy streams never pass through the compressor.
+    try:
+        from .http_compress import HTTPCompressMiddleware
+
+        app = HTTPCompressMiddleware(app, manager, cfg)
+    except Exception as exc:
+        print(f"[emunel-engines] WARNING: HTTP compression middleware not "
+              f"installed: {exc}", flush=True)
+
+    return app
 
 
 def _maybe_enable_core_host(cfg) -> None:

@@ -1,0 +1,49 @@
+{
+  "_comment": "Per-ISP DPI-evasion presets (Iran, 2025-2026 field reports). 'auto' is the safe default. Each preset maps onto the enhanced SNI profile fields: method (technique combination), fooling (TCP-level invalidity injected into decoy packets), repeats (decoy packet count), seqovl (multisplit overlapping-sequence offset), split_pos (byte position of the first split), midsld (split at the middle of the SNI 'sld' label), fingerprint (uTLS-style ClientHello shape). The panel applies a preset to its profile; the client helper executes it.",
+  "strategies": {
+    "auto": {
+      "label": "Auto (recommended)",
+      "description": "Combined decoy + fragmentation with md5sig fooling — the best average across Iranian ISPs.",
+      "method": "combined",
+      "fooling": "md5sig",
+      "repeats": 6,
+      "seqovl": 568,
+      "split_pos": 1,
+      "midsld": true,
+      "fingerprint": "chrome"
+    },
+    "irancell_mci": {
+      "label": "Irancell / MCI (همراه اول)",
+      "description": "fake,multidisorder split-pos=1,midsld fooling=md5sig repeats=6 — best for mobile carriers.",
+      "method": "multidisorder",
+      "fooling": "md5sig",
+      "repeats": 6,
+      "seqovl": 0,
+      "split_pos": 1,
+      "midsld": true,
+      "fingerprint": "chrome"
+    },
+    "mokhaberat_shatel": {
+      "label": "Mokhaberat / Shatel (مخابرات و شاتل)",
+      "description": "multisplit split-seqovl=568 split-pos=1 fooling=ts repeats=6 — for fixed-line ISPs.",
+      "method": "multisplit",
+      "fooling": "ts",
+      "repeats": 6,
+      "seqovl": 568,
+      "split_pos": 1,
+      "midsld": false,
+      "fingerprint": "chrome"
+    },
+    "hard": {
+      "label": "Hard operators (اپراتورهای سختگیرتر)",
+      "description": "fake,fakedsplit fooling=ts repeats=6 fakedsplit-pattern=0x00 — most aggressive decoy set.",
+      "method": "fakedsplit",
+      "fooling": "ts",
+      "repeats": 6,
+      "seqovl": 0,
+      "split_pos": 0,
+      "midsld": false,
+      "fingerprint": "chrome"
+    }
+  }
+}

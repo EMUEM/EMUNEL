@@ -170,6 +170,25 @@ the engine state (on the `/data` volume).
 
 ### REALITY — generating (zero config) vs running (TCP Proxy)
 
+> v1.3: the panel now REALLY probes the generated endpoint before showing
+> a config — unreachable configs are labeled "WILL NOT CONNECT" instead of
+> you discovering it in v2rayNG. And the easiest way to run the runtime:
+
+**Bake the Xray into the image (recommended, one-time):** set the Railway
+service variables `XRAY_VERSION` (an Xray-core release tag, e.g.
+`v25.8.6`) and `XRAY_SHA256` (the 64-hex digest of that release's
+`Xray-linux-64.zip`, from the release page). The Docker build downloads
+the pinned release once, verifies the digest (a mismatch fails the build)
+and installs it to `/opt/xray/xray`. The REALITY engine detects it on
+boot and starts the VLESS+REALITY listener automatically. Leave both
+unset and the image is built exactly as before (strict no-op).
+
+**Expose + address:** Settings → Networking → TCP Proxy → target port
+`8443` (or your `EMUNEL_REALITY_LISTEN_PORT`). Then set
+`REALITY_PUBLIC_HOST=<tcp-proxy-host>[:port]` so generated links point at
+the proxy endpoint, and regenerate the configs — the probe should now say
+"server reachable".
+
 Generating keys and client/server configs works out of the box on any
 plan: **Bypass → REALITY → Generate** gives a `vless://` link
 (`security=reality`, RAW/XHTTP/gRPC) plus the inbound JSON for your own

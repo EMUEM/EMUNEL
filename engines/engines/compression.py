@@ -1,21 +1,18 @@
-"""Adaptive Compression Engine.
+"""Adaptive Compression Engine — two channels, one per host.
 
-Scope, honestly stated: on this platform every client-visible hop is a
-standard VLESS/Trojan/SS/VMess tunnel — the client on the other end is a
-stock proxy core and cannot decompress anything, so compressing the
-client-facing byte stream would break it. The engine therefore:
+CONSOLE host (the real, working channel): the panel's own HTTP responses
+(SPA page, JS/CSS assets, API JSON, subscription feeds) go to browsers and
+client cores that send Accept-Encoding. engines/http_compress.py compresses
+them (gzip stdlib, brotli when the wheel is present), streaming-safe, never
+touching the /i/* data path. Enable this engine in Engine Settings (the
+choice persists) or set EMUNEL_HTTP_COMPRESSION=true; savings show up in
+this engine's metrics.
 
-  * compresses only hops where BOTH ends are ours (the engine-internal
-    data channel and the engine state/backup payloads)
-  * sniffs content and picks the codec (text -> brotli when the wheel is
-    installed, otherwise zlib; incompressible-looking binary -> skip)
-  * enforces the MIN_SAVING_PERCENT rule and self-disables for a batch
-    when compression does not pay (encrypted inner traffic usually does
-    not — the rule catches this within one batch)
-
-The codec itself is real and tested; it becomes user-visible the moment a
-transport that negotiates compression end-to-end exists (e.g. WS
-permessage-deflate support on both sides).
+CORE host (frame pipeline) — honestly still cannot run: every client-visible
+hop is a standard VLESS/Trojan/SS/VMess tunnel and the stock client core on
+the other end cannot decompress anything. The codec stays registered and
+tested there, self-disabling with a visible reason until a transport that
+negotiates compression end-to-end exists.
 """
 from __future__ import annotations
 
@@ -43,9 +40,9 @@ def _looks_like_text(sample: bytes) -> bool:
 
 class CompressionEngine(Engine):
     NAME = "Compress"
-    TITLE = "Adaptive Compression — content-aware, 5% minimum saving"
+    TITLE = "Adaptive Compression — HTTP responses (panel + feeds) + codec"
     HANDLES = frozenset({KIND_FRAMES})
-    HOSTS = frozenset({"core"})
+    HOSTS = frozenset({"core", "console"})
 
     async def init(self, config: dict) -> None:
         self.algos = [a for a in self.cfg.compress_algos
@@ -56,12 +53,18 @@ class CompressionEngine(Engine):
         })
 
     def preconditions(self) -> str | None:
-        # Honest status: no hop in the current architecture can be compressed
-        # without breaking the stock client cores (see docstring). The codec
-        # stays registered + tested; it activates automatically when the core
-        # host gains a frame channel both ends own.
+        if self._on_console():
+            return None      # real channel here: HTTP response compression
+        # Core host — honest status: no hop in the current architecture can
+        # be compressed without breaking the stock client cores (see
+        # docstring). The codec stays registered + tested; it activates
+        # automatically when the core host gains a frame channel both ends
+        # own.
         return ("no compression-capable hop in the current architecture "
                 "(client cores cannot decompress); codec armed and tested")
+
+    def _on_console(self) -> bool:
+        return self.cfg.host == "console"
 
     async def process(self, ctx: EngineContext) -> EngineContext:
         if not ctx.frames:
@@ -107,9 +110,30 @@ class CompressionEngine(Engine):
         return max(0, min(9, self.cfg.compress_level))
 
     def defaults(self) -> dict:
-        return {
+        base = {
             "COMPRESSION_LEVEL": self.cfg.compress_level,
             "MIN_SAVING_PERCENT": self.cfg.compress_min_saving,
             "EMUNEL_COMPRESS_ALGOS": ",".join(self.algos),
             "brotli_available": _brotli_available(),
         }
+        if self._on_console():
+            try:
+                from ..http_compress import stats as http_stats
+
+                base.update(http_stats())
+                base["http_activation"] = ("enable this engine (Engine Settings) "
+                                            "or EMUNEL_HTTP_COMPRESSION=true")
+            except Exception:
+                pass
+        return base
+
+    def snapshot_metrics(self) -> dict:
+        metrics = dict(self.status.metrics)
+        if self._on_console():
+            try:
+                from ..http_compress import stats as http_stats
+
+                metrics.update(http_stats())
+            except Exception:
+                pass
+        return metrics

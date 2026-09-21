@@ -187,13 +187,25 @@ like every other mutation).
 | `POST /api/engines/reality/config` | update target / server names / fingerprint / short ids / listen port |
 | `POST /api/engines/reality/keys` | generate a fresh X25519 keypair — the private key is returned ONCE |
 | `POST /api/engines/reality/restart` | reload env/keys and cycle the pinned-Xray runtime |
-| `POST /api/engines/reality/generate` | `{transport: raw\|xhttp\|grpc}` → inbound + outbound JSON + `vless://` link |
+| `POST /api/engines/reality/generate` | `{transport: raw\|xhttp\|grpc}` → inbound + outbound JSON + `vless://` link **+ a real TCP reachability probe** of the generated endpoint (`server_reachable`, honest `warning` when nothing listens there — the “no ping” clients show) |
+| `GET /api/engines/sni/enhanced/status` | SNI Enhanced: profile, pool, per-technique success rates, scanner state, fallback ladder |
+| `GET /api/engines/sni/enhanced/snis` | allowed-SNI pool snapshot (weighted, adaptive) |
+| `POST /api/engines/sni/enhanced/config` | update the enhanced profile / apply an ISP strategy (`irancell_mci`, `mokhaberat_shatel`, `hard`, `auto`) |
+| `POST /api/engines/sni/enhanced/scan` | `{targets?}` — parallel TCP+TLS probe of CDN/decoy targets (≤32, 2.5 s timeout, rate-limited) |
+| `GET /api/engines/sni/enhanced/logs` | recent engine log lines |
+| `POST /api/engines/sni/enhanced/test` | `{technique?}` — server-side plan proof per technique (stream-preservation invariant) |
+| `GET /api/engines/sni/enhanced/helper` | the enhanced standalone client helper (`?download=1`) |
 
 The SNI helper itself runs on the **client device** (it is downloaded and
 executed next to the proxy client); the panel never performs spoofing.
-The REALITY runtime requires `EMUNEL_XRAY_BINARY` + `EMUNEL_XRAY_SHA256`
-and a Railway TCP Proxy on `EMUNEL_REALITY_LISTEN_PORT` — see
-`engines/README.md`.
+The REALITY runtime accepts a pinned Xray via `EMUNEL_XRAY_BINARY` +
+`EMUNEL_XRAY_SHA256`, **or an Xray baked into the image at build time**
+(set the Railway service variables `XRAY_VERSION` + `XRAY_SHA256` — the
+Dockerfile downloads the pinned release once at build, verifies the digest
+and installs it to `/opt/xray/xray`; the engine detects it on boot). Then
+expose `EMUNEL_REALITY_LISTEN_PORT` through a Railway TCP Proxy and set
+`REALITY_PUBLIC_HOST` to the proxy host:port so generated links point at
+the real endpoint. See `engines/README.md` and `docs/RAILWAY.md`.
 
 ## Volume enforcement — relay-time (the AHB-bypass closure)
 

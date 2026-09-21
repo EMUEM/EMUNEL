@@ -1,0 +1,20 @@
+{
+  "_comment": "Domains commonly NOT filtered by the Iranian DPI (operator-editable via the panel or SNI_ENHANCED_POOL). Each entry is used as the SNI carried by decoy/fake ClientHellos. The panel never contacts these hosts while spoofing — the CLIENT helper sends the decoy packets.",
+  "allowed_snis": [
+    "shaparak.ir",
+    "www.shaparak.ir",
+    "varzesh3.com",
+    "www.varzesh3.com",
+    "soft98.ir",
+    "www.soft98.ir",
+    "telewebion.com",
+    "www.telewebion.com",
+    "google.com",
+    "www.google.com",
+    "scholar.google.com",
+    "news.google.com",
+    "hcaptcha.com",
+    "auth.vercel.com",
+    "cdnjs.cloudflare.com"
+  ]
+}

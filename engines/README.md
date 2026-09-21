@@ -51,7 +51,7 @@ default "baseline" profile is a byte-exact passthrough.
 |---|---|---|---|
 | **Coalesce** | on | console | merges small downlink WS frames (≤`MAX_COALESCE_SIZE`, `COALESCE_TIMEOUT_MS`): fewer frame headers, continuous-download look for DPI. Byte stream preserved exactly. |
 | **Morph** | off | console | shapes downlink frame sizes/pacing per ISP profile; LinUCB bandit learns from real connection outcomes; per-ISP profiles from `EMUNEL_MORPH_PROFILES`; optional self-play. Padding is NOT possible on stream transports (documented no-op). |
-| **Compress** | off | core | real zlib/brotli codec with the 5% minimum-saving rule and content sniffing. **Inactive with a stated reason**: client cores cannot decompress, so no hop can be safely compressed today; the codec is armed + tested for when a compression-capable transport exists. |
+| **Compress** | off | both | REAL channel on the console host: gzip/brotli for the panel's own HTTP responses (page, assets, API JSON, subscription feeds) — streaming-safe, never the `/i/*` data path; enable in Engine Settings or `EMUNEL_HTTP_COMPRESSION=true`, savings in the engine metrics. Core host keeps the honest no-hop reason (client cores cannot decompress a tunnel). |
 | **PreConnect** | on | core | warm TCP pool per recently dialed (host,port): repeat destinations skip TCP+DNS. Bounded (`PRECONNECT_POOL_SIZE`, TTL, max hosts). VMess runs in a pinned Xray subprocess and is not covered. |
 | **FEC** | off | core | XOR erasure codec (k data + ratio·k parity, single-loss recovery per group), unit-tested. **Dormant**: every current transport is TCP — FEC pays only on lossy UDP channels. |
 | **Congestion** | on | core | measures dial RTT + container retransmit ratio (/proc/net/snmp), adapts socket buffers/QUICKACK/NODELAY, emits a CC advisory. Kernel CC switching (BBR↔Cubic↔Vegas) is impossible unprivileged — stated, not faked. |
@@ -62,7 +62,8 @@ default "baseline" profile is a byte-exact passthrough.
 | **DomainFronting** | off | console | rewrites configs to SNI=domestic front + Host=real backend. Requires the self-hosted Caddy edge (see below). |
 | **PortHopping** | off | console | rotates the connect port across `EMUNEL_PORT_HOPPING_PORTS`. Railway exposes one public port — inactive with a reason there. |
 | **SNISpoof** | on | console | SNI-spoofing PROFILE GENERATOR + client helper distributor (see below). The spoofing itself runs on the user's device — a panel on Railway is already past the DPI. |
-| **Reality** | on | console | X25519 keypairs, VLESS+REALITY inbound/outbound config generation (RAW/XHTTP/gRPC) and vless:// share links; optional pinned-Xray runtime (see below). |
+| **Reality** | on | console | X25519 keypairs, VLESS+REALITY inbound/outbound config generation (RAW/XHTTP/gRPC) and vless:// share links + a real reachability probe per generated endpoint; optional pinned-Xray runtime — env pin (`EMUNEL_XRAY_BINARY`+`EMUNEL_XRAY_SHA256`) or baked into the image (`XRAY_VERSION` build variable, digest-verified at build). |
+| **SNIEnhanced** | off | console | stateful DPI evasion control plane (see `engines/sni_enhanced/`): 15 techniques, ISP strategies, weighted allowed-SNI pool, CDN/decoy scanner, per-technique success rates, enhanced client helper with the 4-step fallback ladder. |
 
 Every inactive engine shows WHY in the panel (Engine Settings → reason line).
 

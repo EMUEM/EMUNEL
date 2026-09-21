@@ -227,6 +227,7 @@ menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
 eng:'<path d="M3 12h3.5l2.5-7 4 14 2.5-7H21"/>',
 byp:'<path d="M12 3l7 3v5c0 4.5-3 7.7-7 9-4-1.3-7-4.5-7-9V6z"/><path d="M13 7l-3.2 4.6h2.4l-2 4.8 4.3-5.8h-2.3z"/>',
 evo:'<path d="M4 6c5-4 11 4 16 0M4 12c5-4 11 4 16 0M4 18c5-4 11 4 16 0"/>',
+sne:'<path d="M12 3l7 3v5c0 4.5-3 7.7-7 9-4-1.3-7-4.5-7-9V6z"/><path d="M7.5 12.5c1.5-1.4 3 .6 4.5 1.8 1.5-1.2 3-3.2 4.5-1.8"/>',
 vol:'<path d="M12 3v18M8 7v10M16 7v10M20 10v4M4 10v4"/>',
 gh:'<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" fill="currentColor" stroke="none"/>',
 tg:'<path d="M21.9 4.6 18.9 19c-.2 1-.8 1.2-1.7.8l-4.6-3.4-2.2 2.1c-.3.3-.5.5-1 .5l.4-4.7L18.6 6c.4-.3-.1-.5-.6-.2L7.3 12.4l-4.3-1.4c-.9-.3-.9-.9.2-1.3L20.7 3.3c.8-.3 1.5.2 1.2 1.3Z" fill="currentColor" stroke="none"/>'};
@@ -241,6 +242,10 @@ var USER=null, cleanup=null, pollTimer=null, LINKS={github:"https://github.com/E
 // stays false (tab hidden) while every evolution engine flag is off and
 // nothing was hot-enabled, exactly as the operator spec requires.
 var EVO={visible:false};
+// SNI Enhanced tab visibility — same rule: hidden while SNI_ENHANCED_ENABLED
+// is false and the engine was not hot-enabled (operator spec: "if
+// SNI_ENHANCED_ENABLED=false, the tab must not be shown").
+var SNE={visible:false};
 function setCleanup(fn){if(cleanup)cleanup();cleanup=fn||null}
 function stopPoll(){if(pollTimer){if(pollTimer.stop)pollTimer.stop();else clearInterval(pollTimer);pollTimer=null}}
 // Resilient polling: skips overlapping runs, pauses while the tab is hidden
@@ -280,6 +285,7 @@ function shell(nav){
       '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+' Engines</button>'+
       '<button class="ni '+(nav==="bypass"?"act":"")+'" data-nav="bypass">'+ic("byp")+' Bypass</button>':"")+
     (USER.is_admin&&EVO.visible?'<button class="ni '+(nav==="evolution"?"act":"")+'" data-nav="evolution">'+ic("evo")+' Evolution</button>':"")+
+    (USER.is_admin&&SNE.visible?'<button class="ni '+(nav==="snienhanced"?"act":"")+'" data-nav="snienhanced">'+ic("sne")+' SNI Enhanced</button>':"")+
     (LINKS.github?'<a class="ni" href="'+LINKS.github+'" target="_blank" rel="noopener">'+ic("gh")+' GitHub</a>':"")+
     (LINKS.telegram?'<a class="ni" href="'+esc(LINKS.telegram)+'" target="_blank" rel="noopener">'+ic("tg")+' Telegram</a>':"")+
     '<div style="padding:6px 8px"><span class="free"><span class="fdot"></span>Free</span></div>'+
@@ -296,6 +302,7 @@ function shell(nav){
       '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+'<span>Engines</span></button>'+
       '<button class="ni '+(nav==="bypass"?"act":"")+'" data-nav="bypass">'+ic("byp")+'<span>Bypass</span></button>':"")+
     (USER.is_admin&&EVO.visible?'<button class="ni '+(nav==="evolution"?"act":"")+'" data-nav="evolution">'+ic("evo")+'<span>Evolution</span></button>':"")+
+    (USER.is_admin&&SNE.visible?'<button class="ni '+(nav==="snienhanced"?"act":"")+'" data-nav="snienhanced">'+ic("sne")+'<span>SNI Enhanced</span></button>':"")+
     '</nav></div></div>';
   var lg=$("#lg");if(lg)lg.onclick=logout;
   var lgm=$("#lgm");if(lgm)lgm.onclick=logout;
@@ -308,7 +315,7 @@ function shell(nav){
     b.onclick=function(){window.__closeDrawer();nav_(b.dataset.nav)}});
 }
 function nav_(name){stopPoll();setCleanup(null);
-  if(name==="dash")viewDash();else if(name==="new")viewWizard();else if(name==="engines")viewEngines();else if(name==="bypass")viewBypass();else if(name==="evolution")viewEvolution();else if(name==="admin")viewAdmin()}
+  if(name==="dash")viewDash();else if(name==="new")viewWizard();else if(name==="engines")viewEngines();else if(name==="bypass")viewBypass();else if(name==="evolution")viewEvolution();else if(name==="snienhanced")viewSniEnhanced();else if(name==="admin")viewAdmin()}
 function logout(){api("POST","/auth/logout").then(function(){render()})}
 function closeDrawer(){var w=window.__closeDrawer;if(w)w()}
 // ───────────────────────────── login ─────────────────────────────
@@ -486,7 +493,10 @@ function viewInst(id){
         '<div class="row"><div class="mono grow" id="suburl" style="background:var(--bg2);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;word-break:break-all"></div><button class="btn sm pri" id="subc">Copy</button><a class="btn sm" id="subo" target="_blank" rel="noopener">Open</a></div>'+
         '<div class="row" style="margin-top:9px;gap:6px"><span class="ftx" style="font-size:11.5px">Formats:</span>'+
         '<button class="btn sm" id="sub-v2">v2ray/Clash Verge</button><button class="btn sm" id="sub-sb">sing-box</button><button class="btn sm" id="sub-cl">Clash Meta</button></div>'+
-        '<div class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between"><h3>Individual configs</h3><button class="btn sm" id="cf-r2">Refresh</button></div><div id="cf-b" class="mut">Loading…</div></div>'+
+        '<div class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h3>Individual configs</h3><div class="row" style="gap:6px">'+
+          '<span class="ftx" id="cf-n" style="font-size:11.5px"></span>'+
+          '<input class="inp" id="cf-cnt" type="number" min="0" max="50" style="width:72px" title="Set the number of configs" placeholder="count">'+
+          '<button class="btn sm" id="cf-set">Apply</button><button class="btn sm" id="cf-r2">Refresh</button></div></div><div id="cf-b" class="mut">Loading…</div></div>'+
         '<div class="card" style="margin-top:14px"><h3>Add config</h3>'+
         '<p class="mut" style="font-size:12.5px;margin:6px 0 12px">A new config with its own quota, expiry, speed and IP limits — live immediately, no redeploy.</p>'+
         '<div class="row" style="flex-wrap:wrap"><div class="fld" style="width:170px;margin:0"><label>Protocol</label><select class="inp" id="na-p">'+PROTOS.map(function(p){return '<option value="'+p[0]+'">'+p[1]+"</option>"}).join("")+'</select></div>'+
@@ -529,17 +539,19 @@ function viewInst(id){
           '<div class="row" style="margin-top:6px"><button class="btn sm pri" data-copy="'+esc(url)+'">Copy</button><button class="btn sm" data-qr="'+esc(url)+'">QR</button></div>'
           :'<p class="ftx" style="font-size:11.5px;margin:6px 0 0">No client link while this config is '+stL[0].toLowerCase()+" — enable it or raise its quota.</p>")+
           '<div id="ed-'+esc(uuid)+'" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--bd);border-radius:9px;padding:12px">'+
+          '<div class="row" style="flex-wrap:wrap;margin-bottom:10px"><div class="fld grow" style="min-width:150px;margin:0"><label>Name</label><input class="inp ed-n" maxlength="80" placeholder="e.g. Friend iPhone" value="'+esc(((l&&l.label)||(c&&c.label)||"").toString())+'"></div><div class="grow"></div></div>'+
           '<div class="row" style="flex-wrap:wrap"><div class="fld" style="width:130px;margin:0"><label>Quota</label><input class="inp ed-q" type="number" min="0" step="any" placeholder="unlimited" value="'+(lim?(+(lim/UNIT_BYTES(edUnit(l)))).toString().slice(0,8):"")+'"></div>'+
           '<div class="fld" style="width:84px;margin:0"><label>Unit</label><select class="inp ed-u">'+["KB","MB","GB","TB"].map(function(u){return "<option"+(edUnit(l)===u?" selected":"")+">"+u+"</option>"}).join("")+'</select></div>'+
           '<div class="fld" style="width:120px;margin:0"><label>Days</label><input class="inp ed-e" type="number" min="0" step="any" placeholder="never" value="'+edDays(l)+'"></div>'+
           '<div class="fld" style="width:110px;margin:0"><label>Mbps</label><input class="inp ed-s" type="number" min="0" step="any" placeholder="unlimited" value="'+((l&&l.speed_limit_bytes)?Math.round(l.speed_limit_bytes*8/1048576):"")+'"></div>'+
           '<div class="fld" style="width:100px;margin:0"><label>IPs</label><input class="inp ed-i" type="number" min="0" step="1" placeholder="unlimited" value="'+((l&&l.ip_limit)||"")+'"></div>'+
           '<div class="grow" style="align-self:flex-end;display:flex;gap:6px"><button class="btn sm pri" data-save="'+esc(uuid)+'">Save</button><button class="btn sm" data-cxl="'+esc(uuid)+'">Cancel</button></div></div>'+
-          '<p class="fn" style="margin-top:8px">Empty means unlimited. Saving propagates to the Core immediately — no redeploy.</p></div></div>';
+          '<p class="fn" style="margin-top:8px">Empty means unlimited. Rename via Name — saving propagates to the Core immediately, no redeploy.</p></div></div>';
       }
       function UNIT_BYTES(u){return {KB:1024,MB:1048576,GB:1073741824,TB:1099511627776}[u]||1073741824}
       function edUnit(l){if(!l||!l.limit_bytes)return "GB";var n=l.limit_bytes;if(n>=1073741824)return "GB";if(n>=1048576)return "MB";return "KB"}
       function edDays(l){if(!l||!l.expires_at)return "";var s=l.seconds_remaining;return s==null?"":+(s/86400).toFixed(3)}
+      var cfgLinkUuids=[];
       function loadCfg(){
         // tell the server the public host we're browsing on (edge hides it)
         api("POST","/api/instances/"+id+"/announce-host",{host:location.host}).catch(function(){});
@@ -547,6 +559,9 @@ function viewInst(id){
         Promise.all([api("GET","/api/instances/"+id+"/config"),api("GET","/api/instances/"+id+"/links").catch(function(){return{links:[],live:false}})])
         .then(function(rs){
           var d=rs[0],links=rs[1]&&rs[1].links?rs[1].links:[];
+          cfgLinkUuids=links.map(function(l){return l.uuid});
+          var extra=(d.configs||[]).filter(function(c){return !links.some(function(l){return l.uuid===c.uuid})}).length;
+          var cntEl=$("#cf-n");if(cntEl)cntEl.textContent=links.length+" config"+(links.length===1?"":"s")+(extra?" +"+extra+" core-only":"");
           var subUrl=location.origin+"/i/"+(d.endpoint_path||"").replace("/i/","")+"/sub";
           if(d.endpoint_path){$("#suburl").textContent=subUrl;
             $("#subc").onclick=function(){navigator.clipboard&&navigator.clipboard.writeText(subUrl).then(function(){toast("Subscription URL copied","ok",2500)})};
@@ -587,8 +602,10 @@ function viewInst(id){
               function v(sel){var x=ed.querySelector(sel);var s=x?x.value.trim():"";return s===""?null:parseFloat(s)}
               var u=ed.querySelector(".ed-u").value;
               var body={limit:v(".ed-q"),unit:u,expiry_days:v(".ed-e"),speed_mbps:v(".ed-s"),ip_limit:v(".ed-i")};
+              var nm=ed.querySelector(".ed-n");var nv=nm?nm.value.trim():"";
+              if(nv)body.label=nv;
               api("PATCH","/api/instances/"+id+"/links/"+btn.dataset.save,body)
-                .then(function(l){toast("Saved — quota "+(l.limit_bytes?fmtBytes(l.limit_bytes):"unlimited"),"ok");loadCfg()})
+                .then(function(l){toast("Saved — "+(body.label?"renamed to '"+body.label+"' · ":"")+(l.limit_bytes?fmtBytes(l.limit_bytes):"unlimited"),"ok");loadCfg()})
                 .catch(function(e){toast(e.message,"err")});
             }});
           Array.prototype.forEach.call($("#cf-b").querySelectorAll("[data-tgl]"),function(btn){
@@ -613,6 +630,27 @@ function viewInst(id){
             }});
         }).catch(function(e){$("#cf-b").innerHTML='<span class="ftx">'+esc(e.message)+"</span>"});
       }
+      // set-count: create/delete the delta through the existing link APIs
+      function applyCount(){
+        var t=parseInt($("#cf-cnt").value);
+        if(isNaN(t)||t<0||t>50){toast("Enter a number between 0 and 50","err");return}
+        var cur=cfgLinkUuids.length;
+        if(t===cur){toast("Already "+cur+" config"+(cur===1?"":"s"),"ok");return}
+        if(t>cur){
+          var n=t-cur,ch=Promise.resolve();
+          for(var i=0;i<n;i++){(function(k){ch=ch.then(function(){
+            return api("POST","/api/instances/"+id+"/links",{protocol:"vless-ws",label:"Config "+(cur+k+1)})})})(i+1)}
+          ch.then(function(){toast("Created "+n+" config"+(n===1?"":"s"),"ok");$("#cf-cnt").value="";loadCfg()})
+          .catch(function(e){toast(e.message,"err");loadCfg()});
+        }else{
+          if(!confirm("Delete the "+(cur-t)+" newest config"+(cur-t===1?"":"s")+"? Clients using them stop working immediately."))return;
+          var del=cfgLinkUuids.slice(t),ch2=Promise.resolve();
+          del.forEach(function(u){ch2=ch2.then(function(){return api("DELETE","/api/instances/"+id+"/links/"+u)})});
+          ch2.then(function(){toast("Removed "+(cur-t)+" config"+(cur-t===1?"":"s"),"ok");$("#cf-cnt").value="";loadCfg()})
+          .catch(function(e){toast(e.message,"err");loadCfg()});
+        }
+      }
+      var setBtn=$("#cf-set");if(setBtn)setBtn.onclick=applyCount;
       $("#cf-r").onclick=loadCfg;var cf2=$("#cf-r2");if(cf2)cf2.onclick=loadCfg;loadCfg();
     }
     else if(tab==="volume"){
@@ -1039,9 +1077,15 @@ function viewBypass(){
           btn.disabled=true;
           api("POST","/api/engines/reality/generate",{transport:btn.dataset.gen}).then(function(r){
             btn.disabled=false;
-            bpModal("REALITY "+r.transport.toUpperCase()+" — client import",
+            var head="REALITY "+r.transport.toUpperCase()+" — client import";
+            var reach=(r.server_reachable===true?
+              "\n\n✓ server reachable at "+(r.endpoint||"?")+" — this config should connect.":
+              (r.server_reachable===false?
+                "\n\n⚠ WILL NOT CONNECT: "+(r.warning||("nothing is listening at "+(r.endpoint||"?")))+"\n  (that is the 'no ping' in clients)":
+                ""));
+            bpModal(head,
               r.share_url+"\n\n—— client outbound JSON ——\n"+JSON.stringify(r.outbound,null,2)+
-              "\n\n—— server inbound JSON (run on your Xray) ——\n"+JSON.stringify(r.inbound,null,2))})
+              "\n\n—— server inbound JSON (run on your Xray) ——\n"+JSON.stringify(r.inbound,null,2)+reach)})
           .catch(function(e){btn.disabled=false;toast(e.message,"err")})}});
       var runCard=$("#bp-run");
       if(rt.configured){
@@ -1055,8 +1099,8 @@ function viewBypass(){
             b.disabled=false;toast(r.runtime&&r.runtime.running?"Runtime started":"Runtime not running — check engine logs","ok");loadReality()})
           .catch(function(e){b.disabled=false;toast(e.message,"err")})};
       }else{
-        runCard.innerHTML='<h3 style="margin:0 0 6px">REALITY runtime — not configured</h3>'+
-          '<p class="mut" style="font-size:12.5px;margin:0">Key and config generation work everywhere. To also RUN the VLESS+REALITY listener inside this deployment: install an Xray release, set <span class="mono">EMUNEL_XRAY_BINARY</span> (absolute path) + <span class="emunel mono">EMUNEL_XRAY_SHA256</span> (digest pin), expose <span class="mono">EMUNEL_REALITY_LISTEN_PORT</span> through a Railway TCP Proxy — full guide in <span class="mono">docs/RAILWAY.md</span>. Until then the buttons above generate everything you need for a self-hosted Xray.</p>';
+        runCard.innerHTML='<h3 style="margin:0 0 6px">REALITY runtime — not configured <span class="ftx" style="font-size:11px">(why generated configs do not ping)</span></h3>'+
+          '<p class="mut" style="font-size:12.5px;margin:0">Without a running REALITY server the generated links have nothing to connect to — that is the client "no ping". Easiest fix on Railway: set the service variables <span class="mono">XRAY_VERSION</span> (an Xray release tag, e.g. v25.8.6) + <span class="mono">XRAY_SHA256</span> (the release zip digest) and redeploy — a verified Xray is baked into the image and the listener starts automatically. Then expose <span class="mono">EMUNEL_REALITY_LISTEN_PORT</span> via a Railway TCP Proxy and set <span class="mono">REALITY_PUBLIC_HOST</span> to the proxy host. Alternative: <span class="mono">EMUNEL_XRAY_BINARY</span> + <span class="mono">EMUNEL_XRAY_SHA256</span> pointing at an installed binary. Full guide in <span class="mono">docs/RAILWAY.md</span>.</p>';
       }
     }).catch(function(e){
       $("#bp-rea").innerHTML='<h3 style="margin:0 0 6px">REALITY</h3><p class="mut" style="font-size:12.5px">'+esc(e.message)+"</p>";
@@ -1169,6 +1213,147 @@ function viewEvolution(){
   loadHead();loadGen();
   pollTimer=poll(30000,function(){loadHead();loadGen()});
 }
+// ───────────────────────────── SNI Enhanced (stateful DPI evasion) ─────────────────────────────
+function viewSniEnhanced(){
+  shell("snienhanced");
+  var v=$("#view");
+  v.innerHTML='<div class="ph"><div><h1>SNI Enhanced</h1>'+
+    '<div class="sub">Advanced stateful-DPI evasion — the panel builds and proves the plan; execution runs on client devices through the enhanced helper. The proxy Core is never modified.</div></div>'+
+    '<div class="ha"><button class="btn sm pri" id="se-rf">Refresh</button></div></div>'+
+    '<div id="se-w"></div><div class="sgs" id="se-s"></div>'+
+    '<div class="card" id="se-prof"></div>'+
+    '<div class="card" style="margin-top:14px" id="se-tech"></div>'+
+    '<div class="card" style="margin-top:14px" id="se-pool"></div>'+
+    '<div class="card" style="margin-top:14px" id="se-scan"></div>'+
+    '<div class="card" style="margin-top:14px" id="se-help"></div>';
+  function seSg(l,val,c){var s=String(val);
+    return '<div class="sg"><div class="l">'+l+'</div><div class="v" style="font-size:'+(s.length>18?"13px":"18px")+';'+(c?"color:"+c:"")+'">'+esc(s)+"</div></div>"}
+  function seModal(title,body){
+    var ov=document.createElement("div");ov.className="qr-ov";
+    ov.innerHTML='<div class="qr-c" style="max-width:620px;width:92vw"><b style="font-size:13px">'+esc(title)+'</b>'+
+      '<pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:56vh;overflow:auto;font-size:11.5px;line-height:1.55;text-align:left;margin:12px 0;color:var(--dim)">'+esc(body||"—")+"</pre>"+
+      '<div class="row" style="gap:6px"><button class="btn sm" id="sec">Copy</button><button class="btn sm pri" id="sex">Close</button></div></div>';
+    document.body.appendChild(ov);
+    ov.onclick=function(e){if(e.target===ov)ov.remove()};
+    $("#sex",ov).onclick=function(){ov.remove()};
+    $("#sec",ov).onclick=function(){try{navigator.clipboard.writeText(body||"");toast("Copied","ok")}catch(e){toast("Copy failed","err")}};
+    return ov}
+  function seBar(pct){pct=Math.max(0,Math.min(100,pct||0));
+    return '<div style="flex:1;height:6px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+(pct>=80?"var(--grn)":pct>=50?"var(--amb)":"var(--red)")+';border-radius:4px"></div></div>'}
+  var TECH=["fragment","fake_sni","combined","hostfakesplit","multisplit","multidisorder","fakedsplit","fakeddisorder","tlsrec","oob","disoob","wrong_seq","md5sig","syndata","synack"];
+  function load(){
+    api("GET","/api/engines/sni/enhanced/status").then(function(d){
+      var p=d.profile||{},rates=d.success_rates||{},sc=(d.scanner||{}).last_scan;
+      var rateKeys=Object.keys(rates);
+      var avg=null;if(rateKeys.length){var s=0;rateKeys.forEach(function(k){if(rates[k].rate!=null)s+=rates[k].rate});avg=(s/rateKeys.length).toFixed(0)+"%"}
+      $("#se-w").innerHTML="";
+      $("#se-s").innerHTML=seSg("Technique",p.technique||"—")+seSg("ISP strategy",(p.strategy||"auto"))+
+        seSg("Allowed SNIs",((d.pool||{}).count||0))+seSg("Avg success",avg||"not tested",avg?"var(--grn)":"")+
+        seSg("Scanner",sc?sc.alive+"/"+sc.probed+" alive":"never run")+
+        seSg("Helper",(d.metrics||{}).helper_downloads||0)+" downloads";
+      // profile card
+      var strats=d.strategies||{};
+      var stratOpts=Object.keys(strats).map(function(k){return '<option value="'+k+'"'+(p.strategy===k?" selected":"")+'>'+esc(strats[k].label||k)+"</option>"}).join("");
+      var fool=["md5sig","badseq","badsum","ts","autottl"].map(function(f){return '<option value="'+f+'"'+(p.fooling===f?" selected":"")+">"+f+"</option>"}).join("");
+      var fstrat=["sni_split","half","multi","midsld","pos"].map(function(f){return '<option value="'+f+'"'+(p.fragment_strategy===f?" selected":"")+">"+f+"</option>"}).join("");
+      var fp=["chrome","firefox","safari","randomized"].map(function(f){return '<option value="'+f+'"'+(p.fingerprint===f?" selected":"")+">"+f+"</option>"}).join("");
+      var topts=TECH.map(function(t){return '<option value="'+t+'"'+(p.technique===t?" selected":"")+">"+t+"</option>"}).join("");
+      $("#se-prof").innerHTML='<h3>Profile</h3>'+
+        '<p class="mut" style="font-size:12.5px;margin:6px 0 12px">The active plan the helper executes. Pick an ISP preset, then fine-tune — changes apply to newly generated helper commands.</p>'+
+        '<div class="row" style="flex-wrap:wrap"><div class="fld" style="width:170px;margin:0"><label>Technique</label><select class="inp" id="se-t">'+topts+'</select></div>'+
+        '<div class="fld" style="width:210px;margin:0"><label>ISP strategy</label><select class="inp" id="se-isp">'+stratOpts+'</select></div>'+
+        '<div class="fld" style="width:130px;margin:0"><label>Fooling</label><select class="inp" id="se-f">'+fool+'</select></div>'+
+        '<div class="fld" style="width:150px;margin:0"><label>Fragment strategy</label><select class="inp" id="se-fs">'+fstrat+'</select></div></div>'+
+        '<div class="row" style="flex-wrap:wrap;margin-top:10px">'+
+        '<div class="fld" style="width:110px;margin:0"><label>Delay (s)</label><input class="inp" id="se-d" type="number" min="0.05" max="2" step="0.05" value="'+(p.fragment_delay!=null?p.fragment_delay:0.15)+'"></div>'+
+        '<div class="fld" style="width:100px;margin:0"><label>TTL</label><input class="inp" id="se-ttl" type="number" min="1" max="8" step="1" value="'+(p.ttl_value!=null?p.ttl_value:4)+'"></div>'+
+        '<div class="fld" style="width:130px;margin:0"><label>Seqovl (multisplit)</label><input class="inp" id="se-ovl" type="number" min="0" max="65535" step="1" value="'+(p.seqovl!=null?p.seqovl:568)+'"></div>'+
+        '<div class="fld" style="width:110px;margin:0"><label>Repeats</label><input class="inp" id="se-rp" type="number" min="1" max="8" step="1" value="'+(p.repeats!=null?p.repeats:1)+'"></div>'+
+        '<div class="fld" style="width:140px;margin:0"><label>Fingerprint</label><select class="inp" id="se-fp">'+fp+'</select></div>'+
+        '<div class="fld" style="width:auto;margin:0;display:flex;align-items:flex-end;gap:6px"><label style="margin:0 14px 8px 0"><input type="checkbox" id="se-tr"'+(p.tlsrec?" checked":"")+'> +tlsrec</label><label style="margin:0 0 8px"><input type="checkbox" id="se-tt"'+(p.ttl_trick?" checked":"")+'> TTL trick</label></div>'+
+        '<div class="grow" style="align-self:flex-end"><button class="btn pri" id="se-save">Save profile</button></div></div>';
+      $("#se-save").onclick=function(){
+        var body={technique:$("#se-t").value,fooling:$("#se-f").value,fragment_strategy:$("#se-fs").value,
+          fragment_delay:parseFloat($("#se-d").value)||0.15,ttl_value:parseInt($("#se-ttl").value)||4,
+          seqovl:parseInt($("#se-ovl").value)||0,repeats:parseInt($("#se-rp").value)||1,
+          fingerprint:$("#se-fp").value,tlsrec:$("#se-tr").checked,ttl_trick:$("#se-tt").checked};
+        api("POST","/api/engines/sni/enhanced/config",body).then(function(r){toast("Profile saved","ok");load()})
+        .catch(function(e){toast(e.message,"err")})};
+      $("#se-isp").onchange=function(){
+        api("POST","/api/engines/sni/enhanced/config",{strategy:$("#se-isp").value})
+        .then(function(r){toast("ISP strategy applied: "+$("#se-isp").value,"ok");load()})
+        .catch(function(e){toast(e.message,"err")})};
+      // techniques + success rates
+      $("#se-tech").innerHTML='<h3>Techniques &amp; success rate</h3>'+
+        '<p class="mut" style="font-size:12.5px;margin:6px 0 10px">Rates are measured server-side on every plan-proof run (stream-preservation + structure validation). Raw-socket techniques are validated as templates; the userspace ladder always executes.</p>'+
+        '<table class="tbl"><thead><tr><th>Technique</th><th style="min-width:130px">Success</th><th>Runs</th><th></th></tr></thead><tbody>'+
+        TECH.map(function(t){var r=rates[t]||{};
+          return '<tr><td class="mono">'+t+"</td>"+
+            '<td><div style="display:flex;align-items:center;gap:8px">'+seBar(r.rate||0)+'<span class="mono" style="font-size:11px;min-width:42px">'+(r.rate!=null?r.rate+"%":"—")+"</span></div></td>"+
+            '<td class="mono">'+((r.ok||0)+(r.fail||0))+"</td>"+
+            '<td><button class="btn sm" data-tt="'+t+'">Test</button></td></tr>'}).join("")+"</tbody></table>";
+      Array.prototype.forEach.call($("#se-tech").querySelectorAll("[data-tt]"),function(btn){
+        btn.onclick=function(){btn.disabled=true;
+          api("POST","/api/engines/sni/enhanced/test",{technique:btn.dataset.tt}).then(function(r){
+            btn.disabled=false;load();
+            seModal("Test — "+btn.dataset.tt+(r.ok?" passed":" FAILED"),
+              JSON.stringify({ok:r.ok,steps:r.steps,stream_preserved:r.stream_preserved,raw_socket_required:r.raw_socket_required,fake_sni:r.fake_sni,warnings:r.warnings,tlsrec_proof:r.tlsrec_proof},null,2))})
+          .catch(function(e){btn.disabled=false;toast(e.message,"err")})}});
+      // pool
+      var pool=d.pool||{},stats=pool.stats||{};
+      $("#se-pool").innerHTML='<h3>Allowed SNIs <span class="free" style="margin-left:6px">IR</span></h3>'+
+        '<p class="mut" style="font-size:12.5px;margin:6px 0 10px">Domains the DPI lets through — used as decoy SNIs. Weights adapt to observed success (0.25x - 4x).</p>'+
+        '<div id="se-pl">'+((pool.snis||[]).map(function(s){var st=stats[s]||{};
+          return '<span class="chip" style="margin:2px" title="weight '+st.weight+'x · ok '+(st.ok||0)+" · fail "+(st.fail||0)+'">'+esc(s)+"</span>"}).join("")||'<span class="ftx">pool empty</span>')+"</div>"+
+        '<div class="fld" style="margin-top:10px"><label>Edit pool (one per line or comma-separated, max 64)</label>'+
+        '<textarea class="inp" id="se-poolin" rows="4" style="font-family:var(--mono,monospace);font-size:11.5px">'+esc((pool.snis||[]).join("\n"))+"</textarea></div>"+
+        '<div class="row" style="margin-top:8px"><button class="btn pri" id="se-pools">Save pool</button><span class="ftx" style="font-size:11px">validation: hostname, max 253 chars</span></div>';
+      $("#se-pools").onclick=function(){
+        var list=$("#se-poolin").value.split(/[\n,]/).map(function(s){return s.trim()}).filter(Boolean);
+        api("POST","/api/engines/sni/enhanced/config",{sni_pool:list}).then(function(){toast("Pool saved","ok");load()})
+        .catch(function(e){toast(e.message,"err")})};
+      // scanner
+      var results=(sc&&sc.results)||[];
+      $("#se-scan").innerHTML='<h3>CDN / decoy-target scanner</h3>'+
+        '<p class="mut" style="font-size:12.5px;margin:6px 0 10px">Parallel TCP+TLS probes from this deployment — proves targets are alive, measures latency. The Iran-side verdict is your client\'s. Auto-scan every '+esc(((d.scanner||{}).interval_hours||6))+'h.</p>'+
+        (sc?'<p class="ftx" style="font-size:11.5px;margin:2px 0 8px">Last scan '+esc(sc.started_at)+" — "+sc.alive+"/"+sc.probed+" alive · "+sc.duration_ms+"ms</p>":"")+
+        (results.length?'<table class="tbl"><thead><tr><th>Target</th><th>Alive</th><th>TLS</th><th>Latency</th></tr></thead><tbody>'+
+          results.slice(0,12).map(function(r){return '<tr><td class="mono">'+esc(r.target)+"</td><td>"+(r.ok?"✓":"✗")+"</td><td>"+(r.tls?"✓":"—")+"</td><td class='mono'>"+(r.latency_ms!=null?r.latency_ms+" ms":"—")+"</td></tr>"}).join("")+"</tbody></table>":'<p class="mut" style="font-size:12px">No scan yet.</p>')+
+        '<div class="row" style="margin-top:10px;flex-wrap:wrap"><div class="fld grow" style="min-width:220px;margin:0"><label>Targets (host:port, comma-separated — blank = default set)</label><input class="inp" id="se-tg" placeholder="1.1.1.1:443,cdnjs.cloudflare.com:443"></div>'+
+        '<div class="grow" style="align-self:flex-end"><button class="btn pri" id="se-scn">Scan new IPs</button></div></div>';
+      $("#se-scn").onclick=function(){var b=$("#se-scn");b.disabled=true;
+        var t=$("#se-tg").value.trim();
+        api("POST","/api/engines/sni/enhanced/scan",t?{targets:t}:{}).then(function(r){
+          b.disabled=false;load();
+          toast("Scan finished — "+(r.alive||0)+"/"+(r.probed||0)+" alive",r.alive?"ok":"err")})
+        .catch(function(e){b.disabled=false;toast(e.message,"err")})};
+      // helper + fallback
+      var chain=d.fallback_chain||[];
+      $("#se-help").innerHTML='<h3>Client helper</h3>'+
+        '<p class="mut" style="font-size:12.5px;margin:6px 0 8px">Download and run NEXT TO your proxy client (Python 3.9+, stdlib only). It listens locally, applies the plan to every ClientHello and relays — with the fallback ladder.</p>'+
+        '<div class="mono" style="background:var(--bg2);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;word-break:break-all;font-size:11px">'+esc(d.helper_usage||"")+"</div>"+
+        '<div class="row" style="margin-top:8px;gap:6px"><a class="btn sm pri" id="se-dl" download="emunel_sni_enhanced_helper.py">Download helper</a><button class="btn sm" id="se-usage">Usage details</button></div>'+
+        '<h3 style="margin-top:16px">Fallback ladder</h3>'+
+        (chain.map(function(s,i){return '<div class="row" style="gap:8px;margin-top:6px"><span class="chip" style="'+(d.fallback_now===s.step?"color:var(--grn);border-color:var(--grn)":"")+'">'+(i+1)+". "+esc(s.step)+"</span>"+'<span class="ftx" style="font-size:11.5px">'+esc(s.condition||"")+"</span></div>"}).join("")||'<p class="mut">—</p>');
+      $("#se-dl").href="/api/engines/sni/enhanced/helper?download=1";
+      $("#se-usage").onclick=function(){seModal("Enhanced helper — usage",
+        "1. Download emunel_sni_enhanced_helper.py to the PC running your proxy client\n"+
+        "2. Run:  python emunel_sni_enhanced_helper.py --connect <server-host>:443 --technique combined --ttl 4\n"+
+        "3. Point your client's server address at 127.0.0.1:40443\n\n"+
+        "Ladder on the client: enhanced techniques -> basic spoofing -> direct connect.\n"+
+        "Raw-socket techniques (multisplit overlap, oob, syndata, synack, wrong_seq,\n"+
+        "md5sig) execute in full only when the helper runs with admin rights; otherwise\n"+
+        "it degrades to low-TTL decoy + fragmentation and says so in its log.")};
+    }).catch(function(e){
+      $("#se-s").innerHTML="";$("#se-prof").innerHTML="";$("#se-tech").innerHTML="";$("#se-pool").innerHTML="";
+      $("#se-scan").innerHTML="";$("#se-help").innerHTML="";
+      $("#se-w").innerHTML='<div class="card"><b>SNI Enhanced unavailable</b><p class="mut" style="font-size:12.5px">'+
+        esc(e.message||"engine not active")+"</p></div>"});
+  }
+  $("#se-rf").onclick=load;
+  load();
+  pollTimer=poll(30000,function(){return load()});
+}
 // ───────────────────────────── boot ─────────────────────────────
 function render(){
   api("GET","/auth/me").then(function(me){
@@ -1179,9 +1364,17 @@ function render(){
     // Evolution tab: admin-only, hidden while every evolution engine flag
     // is false and none was hot-enabled. One best-effort fetch — any
     // failure keeps the panel exactly as it was.
-    if(USER.is_admin){api("GET","/api/synergy/status").then(function(s){
-      if(s&&s.flags&&(s.flags.chaos||s.flags.mesh||s.flags.genetic||s.flags.synergy||s.any_active))EVO.visible=true;
-    }).catch(function(){}).then(boot)}else boot();
+    if(USER.is_admin){
+      var evoQ=api("GET","/api/synergy/status").then(function(s){
+        if(s&&s.flags&&(s.flags.chaos||s.flags.mesh||s.flags.genetic||s.flags.synergy||s.any_active))EVO.visible=true;
+      }).catch(function(){});
+      // SNI Enhanced tab: admin-only, hidden while SNI_ENHANCED_ENABLED=false
+      // and the engine was not hot-enabled (operator spec).
+      var sneQ=api("GET","/api/engines/sni/enhanced/status").then(function(s){
+        if(s&&s.profile)SNE.visible=true;
+      }).catch(function(){});
+      Promise.all([evoQ,sneQ]).then(boot,boot);
+    }else boot();
   }).catch(function(e){
     $("#app").innerHTML='<div class="lw"><div class="lc"><div class="card"><b>EMUNEL Console failed to load</b><p class="mut">'+esc(e.message)+"</p></div></div></div>";
   });

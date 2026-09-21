@@ -22,6 +22,16 @@ on mutations) and are additive: the existing /api/* surface is untouched.
   POST /api/engines/reality/keys        generate a fresh X25519 keypair
   POST /api/engines/reality/restart     reload keys/env + cycle the runtime
   POST /api/engines/reality/generate    inbound + outbound + vless:// link
+
+  SNI Enhanced (spec paths, prefixed /enhanced because /sni/status and
+  /sni/config already serve the basic SNISpoof engine):
+  GET  /api/engines/sni/enhanced/status   profile + pool + rates + scanner
+  GET  /api/engines/sni/enhanced/snis     allowed-SNI pool snapshot
+  POST /api/engines/sni/enhanced/config   update the profile / ISP strategy
+  POST /api/engines/sni/enhanced/scan    probe CDN/decoy targets (bounded)
+  GET  /api/engines/sni/enhanced/logs    recent engine log lines
+  POST /api/engines/sni/enhanced/test    server-side plan proof per technique
+  GET  /api/engines/sni/enhanced/helper  the enhanced client helper script
 """
 from __future__ import annotations
 
@@ -196,13 +206,16 @@ def build_router(manager) -> APIRouter:
             "runtime": {
                 "configured": engine.runtime_configured(),
                 "running": engine.runtime_running(),
+                "source": engine.runtime_source(),
                 "listen": (f"{engine.cfg.reality_listen_host}:"
                            f"{engine.profile['listen_port']}"),
                 "xray_binary": engine.cfg.xray_binary or "",
-                "how_to_enable": "install an Xray release, set EMUNEL_XRAY_BINARY "
-                                  "(absolute path) + EMUNEL_XRAY_SHA256 (digest), "
-                                  "expose EMUNEL_REALITY_LISTEN_PORT via a Railway "
-                                  "TCP Proxy — see docs/RAILWAY.md",
+                "public_host": engine.cfg.reality_public_host or "",
+                "how_to_enable": "build the image with the XRAY_VERSION build "
+                                  "variable (docs/RAILWAY.md) or set EMUNEL_XRAY_BINARY "
+                                  "+ EMUNEL_XRAY_SHA256; expose EMUNEL_REALITY_LISTEN_PORT "
+                                  "via a Railway TCP Proxy and set REALITY_PUBLIC_HOST "
+                                  "to the proxy's host:port",
             },
             "metrics": engine.snapshot_metrics(),
             "transports": ["raw", "xhttp", "grpc"],
@@ -245,11 +258,19 @@ def build_router(manager) -> APIRouter:
     async def reality_generate(request: Request, _=None):
         """Build inbound + outbound + vless:// link for the asking client.
         Body: {transport?: raw|xhttp|grpc, host?: public address (default
-        request Host), port?: override the listen port}."""
+        REALITY_PUBLIC_HOST env, then the request Host), port?: override}.
+
+        HONEST reachability check (why generated links "don't ping" in
+        clients): before returning, the panel really TCP-probes the target
+        address:port and reports server_reachable — a config with no server
+        behind it is labeled as such instead of the user discovering it in
+        v2rayNG."""
         await _admin(request)
         engine = _engine("Reality")
         body = await request.json() if request.headers.get("content-type") else {}
-        address = str(body.get("host") or request.headers.get("host") or "").split(":")[0]
+        address = str(body.get("host") or "").split(":")[0] \
+            or (engine.cfg.reality_public_host or "").split(":")[0] \
+            or str(request.headers.get("host") or "").split(":")[0]
         if not address:
             from fastapi import HTTPException
 
@@ -260,11 +281,129 @@ def build_router(manager) -> APIRouter:
         except (TypeError, ValueError):
             port = None
         try:
-            return engine.generate_configs(address=address, transport=transport, port=port)
+            result = engine.generate_configs(address=address, transport=transport, port=port)
         except ValueError as exc:
             from fastapi import HTTPException
 
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # real TCP probe of the generated endpoint (1.5s) — reachable?
+        probe_port = port or engine.profile["listen_port"]
+        reachable, probe_error = False, ""
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(address, probe_port), timeout=1.5)
+            reachable = True
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+        except Exception as exc:
+            probe_error = type(exc).__name__ if isinstance(exc, OSError) else "timeout"
+        result["server_reachable"] = reachable
+        result["endpoint"] = f"{address}:{probe_port}"
+        if not reachable:
+            result["warning"] = (
+                f"nothing is listening at {address}:{probe_port} — this config will "
+                "NOT connect in clients (that is the 'no ping'). The REALITY runtime "
+                "needs a pinned Xray: build the image with the XRAY_VERSION build "
+                "variable (see docs/RAILWAY.md), expose the port via a Railway TCP "
+                "Proxy, set REALITY_PUBLIC_HOST to the proxy's host:port, then "
+                "regenerate."
+                if not engine.runtime_running()
+                else f"the runtime is running but {address}:{probe_port} is not "
+                     "reachable from here — check the TCP Proxy / REALITY_PUBLIC_HOST")
+        else:
+            result["warning"] = ""
+        return result
+
+    # ---- SNI Enhanced (stateful DPI evasion — spec paths live under
+    # /api/engines/sni/enhanced/* because /sni/status and /sni/config are
+    # already taken by the basic SNISpoof engine; collision would break
+    # the existing Bypass tab) --------------------------------------------
+    def _enhanced_engine():
+        engine = manager.engines.get("SNIEnhanced")
+        if engine is None or not engine.status.active:
+            from fastapi import HTTPException
+
+            reason = engine.status.reason if engine is not None else "not running"
+            raise HTTPException(
+                status_code=503,
+                detail=f"SNIEnhanced engine is not active: {reason}")
+        return engine
+
+    @router.get("/sni/enhanced/status")
+    async def sni_enhanced_status(request: Request, _=None):
+        await _admin(request)
+        return _enhanced_engine().status_payload()
+
+    @router.get("/sni/enhanced/snis")
+    async def sni_enhanced_snis(request: Request, _=None):
+        await _admin(request)
+        engine = _enhanced_engine()
+        return engine.pool.snapshot()
+
+    @router.post("/sni/enhanced/config")
+    async def sni_enhanced_config(request: Request, _=None):
+        await _admin(request)
+        engine = _enhanced_engine()
+        body = await request.json()
+        try:
+            profile = engine.set_profile(body)
+        except ValueError as exc:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "profile": profile}
+
+    @router.post("/sni/enhanced/scan")
+    async def sni_enhanced_scan(request: Request, _=None):
+        """Body: {targets?: "host:port,..." | [..]} — omit to re-probe the
+        configured target set. Bounded: <=32 targets, 2.5s timeout, rate-limited."""
+        await _admin(request)
+        engine = _enhanced_engine()
+        body = await request.json() if request.headers.get("content-type") else {}
+        targets = body.get("targets") if isinstance(body, dict) else None
+        try:
+            return await engine.scan(targets, force=True)
+        except ValueError as exc:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/sni/enhanced/logs")
+    async def sni_enhanced_logs(request: Request, limit: int = 80, _=None):
+        await _admin(request)
+        limit = max(1, min(limit, 300))
+        return {"logs": manager.engine_logs("SNIEnhanced", limit)}
+
+    @router.post("/sni/enhanced/test")
+    async def sni_enhanced_test(request: Request, _=None):
+        """Body: {technique?: name} — server-side plan proof per technique."""
+        await _admin(request)
+        engine = _enhanced_engine()
+        body = await request.json() if request.headers.get("content-type") else {}
+        technique = body.get("technique") if isinstance(body, dict) else None
+        try:
+            return engine.run_test(technique)
+        except ValueError as exc:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/sni/enhanced/helper")
+    async def sni_enhanced_helper(request: Request, download: int = 0, _=None):
+        await _admin(request)
+        engine = _enhanced_engine()
+        source = engine.helper_source()
+        headers = {"Cache-Control": "no-store"}
+        if download:
+            headers["Content-Disposition"] = \
+                'attachment; filename="emunel_sni_enhanced_helper.py"'
+        from fastapi import Response
+
+        return Response(content=source, media_type="text/plain; charset=utf-8",
+                        headers=headers)
 
     @router.post("/{name}/enable")
     async def engines_enable(name: str, request: Request, _=None):

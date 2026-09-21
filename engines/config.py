@@ -137,6 +137,21 @@ class EngineEnv:
     snispoof_on: bool = True
     reality_on: bool = True
 
+    # ── SNI Enhanced (stateful DPI evasion — spec's flag names with an
+    # ENHANCED namespace so the basic SNISpoof engine's SNI_* knobs stay
+    # untouched; all values follow the operator's spec) ──
+    snienhanced_on: bool = False                     # SNI_ENHANCED_ENABLED
+    snienhanced_method: str = "combined"              # SNI_ENHANCED_METHOD
+    snienhanced_fooling: str = "md5sig"                # SNI_ENHANCED_FOOLING
+    snienhanced_seqovl: int = 568                      # SNI_ENHANCED_MULTISPLIT_SEQOVL
+    snienhanced_fragment_delay: float = 0.15           # SNI_ENHANCED_FRAGMENT_DELAY
+    snienhanced_ttl_value: int = 4                     # SNI_ENHANCED_TTL_VALUE
+    snienhanced_scan_interval_hours: int = 6          # SNI_ENHANCED_SCAN_INTERVAL_HOURS
+    snienhanced_fingerprint: str = "chrome"            # SNI_ENHANCED_FINGERPRINT
+    snienhanced_pool: list[str] = field(default_factory=list)   # SNI_ENHANCED_POOL (csv)
+    snienhanced_scan_min_interval: float = 30.0        # EMUNEL_SNI_ENHANCED_SCAN_MIN_INTERVAL
+    snienhanced_max_state_kb: int = 512               # EMUNEL_SNI_ENHANCED_MAX_STATE_KB
+
     # ── Coalescing ─────────────────────────────────────────────────────────
     coalesce_max_size: int = 16384             # MAX_COALESCE_SIZE
     coalesce_timeout_ms: int = 8              # COALESCE_TIMEOUT_MS
@@ -159,6 +174,7 @@ class EngineEnv:
     compress_min_saving: int = 5               # MIN_SAVING_PERCENT
     compress_algos: list[str] = field(default_factory=list)
     compress_sample: int = 65536
+    http_compress_on: bool = False              # EMUNEL_HTTP_COMPRESSION
 
     # ── Pre-connect ───────────────────────────────────────────────────────
     preconnect_pool_size: int = 2             # PRECONNECT_POOL_SIZE
@@ -217,6 +233,7 @@ class EngineEnv:
     reality_listen_host: str = "0.0.0.0"          # EMUNEL_REALITY_LISTEN_HOST
     reality_listen_port: int = 8443               # EMUNEL_REALITY_LISTEN_PORT
     reality_public_port: int = 0                  # EMUNEL_REALITY_PUBLIC_PORT (0 = same)
+    reality_public_host: str = ""                  # REALITY_PUBLIC_HOST (TCP proxy host[:port])
     reality_uuid: str = ""                        # REALITY_UUID (client uuid)
     reality_flow: str = "xtls-rprx-vision"        # REALITY_FLOW
     xray_binary: str = ""                          # EMUNEL_XRAY_BINARY (pinned runtime)
@@ -261,7 +278,7 @@ class EngineEnv:
 DEFAULT_PIPELINE = ("Coalesce,Morph,Compress,PreConnect,FEC,Congestion,"
                    "SessionResumption,FakeHandshake,SplitTunnel,"
                    "SNIRotation,DomainFronting,PortHopping,SNISpoof,Reality,"
-                   "Chaos,Mesh,Genetic,Synergy")
+                   "Chaos,Mesh,Genetic,Synergy,SNIEnhanced")
 
 # engine NAME -> enable-flag env var (hot toggles may override a missing
 # default, but an explicit =0 in the environment is a hard kill-switch)
@@ -285,6 +302,8 @@ ENGINE_FLAG_VARS = {
     "Mesh": "DPI_MESH_ENABLED",
     "Genetic": "GENETIC_ENGINE_ENABLED",
     "Synergy": "SYNERGY_ENABLED",
+    # SNI Enhanced — operator spec flag name, verbatim
+    "SNIEnhanced": "SNI_ENHANCED_ENABLED",
 }
 
 DEFAULT_SNI_POOL = "cdnjs.cloudflare.com,www.hcaptcha.com,auth.vercel.com,www.google.com"
@@ -320,6 +339,18 @@ def parse_env(host: str = "console") -> EngineEnv:
         snispoof_on=_bool("EMUNEL_ENGINE_SNI_SPOOF_ENABLED", True),
         reality_on=_bool("EMUNEL_ENGINE_REALITY_ENABLED", True),
 
+        snienhanced_on=_bool("SNI_ENHANCED_ENABLED", False),
+        snienhanced_method=(_str("SNI_ENHANCED_METHOD", "combined").strip().lower() or "combined"),
+        snienhanced_fooling=(_str("SNI_ENHANCED_FOOLING", "md5sig").strip().lower() or "md5sig"),
+        snienhanced_seqovl=max(0, _int("SNI_ENHANCED_MULTISPLIT_SEQOVL", 568)),
+        snienhanced_fragment_delay=min(2.0, max(0.05, _float("SNI_ENHANCED_FRAGMENT_DELAY", 0.15))),
+        snienhanced_ttl_value=min(8, max(1, _int("SNI_ENHANCED_TTL_VALUE", 4))),
+        snienhanced_scan_interval_hours=min(48, max(1, _int("SNI_ENHANCED_SCAN_INTERVAL_HOURS", 6))),
+        snienhanced_fingerprint=_str("SNI_ENHANCED_FINGERPRINT", "chrome").strip().lower() or "chrome",
+        snienhanced_pool=_csv("SNI_ENHANCED_POOL", ""),
+        snienhanced_scan_min_interval=max(5.0, _float("EMUNEL_SNI_ENHANCED_SCAN_MIN_INTERVAL", 30.0)),
+        snienhanced_max_state_kb=max(64, _int("EMUNEL_SNI_ENHANCED_MAX_STATE_KB", 512)),
+
         sni_method=(_str("SNI_METHOD", "combined").strip().lower() or "combined"),
         sni_fragment_strategy=(_str("SNI_FRAGMENT_STRATEGY", "sni_split").strip().lower() or "sni_split"),
         sni_fragment_delay=min(2.0, max(0.0, _float("SNI_FRAGMENT_DELAY", 0.1))),
@@ -341,6 +372,7 @@ def parse_env(host: str = "console") -> EngineEnv:
         reality_listen_host=_str("EMUNEL_REALITY_LISTEN_HOST", "0.0.0.0").strip() or "0.0.0.0",
         reality_listen_port=_int("EMUNEL_REALITY_LISTEN_PORT", 8443),
         reality_public_port=_int("EMUNEL_REALITY_PUBLIC_PORT", 0),
+        reality_public_host=_str("REALITY_PUBLIC_HOST", "").strip(),
         reality_uuid=_str("REALITY_UUID", "").strip(),
         reality_flow=_str("REALITY_FLOW", "xtls-rprx-vision").strip() or "xtls-rprx-vision",
         xray_binary=_str("EMUNEL_XRAY_BINARY", "").strip(),
@@ -366,6 +398,7 @@ def parse_env(host: str = "console") -> EngineEnv:
         compress_min_saving=_int("MIN_SAVING_PERCENT", 5),
         compress_algos=_csv("EMUNEL_COMPRESS_ALGOS", "zlib"),
         compress_sample=_int("EMUNEL_ENGINE_COMPRESS_MAX_SAMPLE", 65536),
+        http_compress_on=_bool("EMUNEL_HTTP_COMPRESSION", False),
 
         preconnect_pool_size=_int("PRECONNECT_POOL_SIZE", 2),
         preconnect_ttl_sec=_int("PRECONNECT_TTL_SEC", 30),

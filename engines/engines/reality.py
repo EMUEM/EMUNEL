@@ -203,10 +203,30 @@ def build_share_link(cfg_profile: dict, *, address: str, port: int, uuid: str,
     return f"vless://{uuid}@{address}{port_part}?{query}#{quote(remark)}"
 
 
-# ---------------------------------------------------------------------------
 # Pinned-binary verification — same provenance rule as the Core's VMess
 # runtime (never downloaded, never shell-executed, digest-pinned, 0600-ish).
+# A binary baked into the image at BUILD time (Dockerfile ARG XRAY_VERSION,
+# verified there against its pinned digest) satisfies the same rule: the
+# digest file rides next to the binary and is re-checked at every start.
 # ---------------------------------------------------------------------------
+BAKED_XRAY_PATH = "/opt/xray/xray"
+
+
+def baked_xray() -> tuple[str, str] | None:
+    """(path, sha256) of an Xray baked into the image by the Docker build
+    (ARG XRAY_VERSION + digest file), or None when not baked."""
+    try:
+        path = Path(BAKED_XRAY_PATH)
+        if not path.is_absolute() or not path.is_file():
+            return None
+        digest = path.with_suffix(".sha256").read_text(encoding="utf-8").strip().lower()
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            return None
+        return str(path), digest
+    except (OSError, ValueError):
+        return None
+
+
 def verify_xray_binary(binary_path: str, sha256: str) -> str:
     path = Path(binary_path or "")
     if not binary_path or not path.is_absolute() or not path.is_file():
@@ -460,8 +480,20 @@ class RealityEngine(Engine):
         }
 
     # ---- optional pinned runtime ---------------------------------------------
+    def runtime_source(self) -> str:
+        """'env' | 'image' | '' — where the pinned Xray comes from."""
+        if self.cfg.xray_binary and self.cfg.xray_sha256:
+            return "env"
+        return "image" if baked_xray() else ""
+
+    def _effective_binary(self) -> tuple[str, str] | None:
+        """(path, sha256) from env pin or the image bake, env wins."""
+        if self.cfg.xray_binary and self.cfg.xray_sha256:
+            return self.cfg.xray_binary, self.cfg.xray_sha256
+        return baked_xray()
+
     def runtime_configured(self) -> bool:
-        return bool(self.cfg.xray_binary and self.cfg.xray_sha256)
+        return self._effective_binary() is not None
 
     def runtime_running(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
@@ -469,8 +501,13 @@ class RealityEngine(Engine):
     async def runtime_start(self) -> dict:
         if self.runtime_running():
             return {"ok": True, "already": True}
-        binary = await asyncio.to_thread(
-            verify_xray_binary, self.cfg.xray_binary, self.cfg.xray_sha256)
+        pair = self._effective_binary()
+        if pair is None:
+            raise RuntimeError(
+                "REALITY runtime needs a pinned Xray: set EMUNEL_XRAY_BINARY + "
+                "EMUNEL_XRAY_SHA256, or build the image with the XRAY_VERSION "
+                "build variable (see docs/RAILWAY.md)")
+        binary = await asyncio.to_thread(verify_xray_binary, pair[0], pair[1])
         if not self._private_key:
             self.generate_keys()
         profile = dict(self.profile)
@@ -513,7 +550,8 @@ class RealityEngine(Engine):
         if not self.runtime_running():
             raise RuntimeError("Xray exited immediately — check the engine log (bad key/target/port?)")
         self.log.info(f"REALITY runtime listening on {self.cfg.reality_listen_host}:"
-                      f"{self.profile['listen_port']} (pinned Xray)")
+                      f"{self.profile['listen_port']} (pinned Xray, source="
+                      f"{self.runtime_source()})")
         return {"ok": True, "pid": self._proc.pid,
                 "listen": f"{self.cfg.reality_listen_host}:{self.profile['listen_port']}"}
 
