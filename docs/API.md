@@ -207,3 +207,25 @@ stopping capped instances, alerting on unreachable stats via
 `EMUNEL_VOLUME_STALE_ALERT_MISSES` / `EMUNEL_VOLUME_STALE_STOP_MINUTES`)
 and repairs core-state regression so a wiped state file can never
 silently renew a quota.
+
+## Evolution engines (v1.2 — additive, flag-gated OFF)
+
+All routes below are NEW; nothing existing moved. The two `/api/mesh`
+routes are **public** (they are what clients call — no session, no PII,
+rate-limited both by the console limiter and in-engine); everything else
+mirrors the admin conventions of `/api/engines/*`.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| `POST /api/mesh/report` | public (rate-limited, ≤1KB JSON) | Submit a DPI signature: `{isp, region, protocol, transport, sni, result, latency}` — ISP/region are stored only as salted hashes (`MESH_SALT`), never raw; answer `{"stored": true}` / fallback marker |
+| `GET /api/mesh/policy?isp=X&region=Y` | public | Best-transport policy for an ISP+region: `{policy: {recommended_protocol, params{success_rate, avg_latency_ms, jitter_ms, samples}, confidence}}` |
+| `GET /api/chaos/status` | admin | Window state (current frame, seed, switch-in-ms), session count, self-play integrity + RTT stats, applied genome hints |
+| `GET /api/genetic/population` | admin | The genome table: all genomes sorted by fitness with generation + parent ids |
+| `GET /api/genetic/status` | admin | Generation, best genome, per-generation history (best/avg fitness), timers, metrics |
+| `POST /api/genetic/evolve` | admin | Force Evolution — breed the next generation now (bottom-5 out, children of top-5 in) |
+| `GET /api/synergy/status` | admin | Engine flags + active states + synergy cycle health + the DpiMesh map (top 50 policies) — this is also what the panel's Evolution tab uses for visibility |
+
+Engine flags (all default `false`, verbatim from the operator spec):
+`CHAOS_PROTOCOL_ENABLED`, `DPI_MESH_ENABLED`, `GENETIC_ENGINE_ENABLED`,
+`SYNERGY_ENABLED` — plus `CHAOS_SECRET` and `MESH_SALT` secrets. See
+`.env.example` and `engines/README.md` for the full tunable list.

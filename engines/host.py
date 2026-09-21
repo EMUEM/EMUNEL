@@ -51,6 +51,17 @@ def wrap_console(console_app, manager=None):
         print(f"[emunel-engines] WARNING: /api/engines router not mounted: {exc}",
               flush=True)
 
+    # 1b. /api/{mesh,chaos,genetic,synergy}/* evolution router — additive
+    # namespace (all engines flag-gated OFF by default; the routes answer
+    # with enabled:false until an operator turns the flags on)
+    try:
+        from .evolution_api import build_evolution_router
+
+        console_app.include_router(build_evolution_router(manager))
+    except Exception as exc:
+        print(f"[emunel-engines] WARNING: evolution router not mounted: {exc}",
+              flush=True)
+
     # 2. chain the lifespan: engine manager start/stop around the console's
     try:
         original_lifespan = console_app.router.lifespan_context

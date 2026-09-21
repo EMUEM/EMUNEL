@@ -20,6 +20,11 @@ from .domain_fronting import DomainFrontingEngine
 from .port_hopping import PortHoppingEngine
 from .sni_spoofing import SNISpoofingEngine
 from .reality import RealityEngine
+# Evolution engines (additive packages — flag-gated OFF by default)
+from ..chaos import ChaosEngine
+from ..mesh import MeshEngine
+from ..genetic import GeneticEngine
+from ..synergy import SynergyEngine
 
 REGISTRY: dict[str, type] = {
     "Coalesce": CoalescingEngine,
@@ -36,6 +41,12 @@ REGISTRY: dict[str, type] = {
     "PortHopping": PortHoppingEngine,
     "SNISpoof": SNISpoofingEngine,
     "Reality": RealityEngine,
+    # Evolution engines — CHAOS_PROTOCOL_ENABLED / DPI_MESH_ENABLED /
+    # GENETIC_ENGINE_ENABLED / SYNERGY_ENABLED (all default false)
+    "Chaos": ChaosEngine,
+    "Mesh": MeshEngine,
+    "Genetic": GeneticEngine,
+    "Synergy": SynergyEngine,
 }
 
 __all__ = ["REGISTRY"]

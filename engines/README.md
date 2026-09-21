@@ -159,3 +159,42 @@ targets (blubank.com, divar.ir, snapp.ir); avoid google/microsoft
    document the variables in `.env.example`.
 4. It appears in the pipeline (`EMUNEL_PIPELINE_ORDER`), the Engine
    Settings page and the CLI automatically.
+
+## Evolution engines (v1.2 — additive, all OFF by default)
+
+Four new engines form a **self-completing system**: the panel learns what
+the DPI does, breeds the protocol parameters that survive it, and serves
+them through a shape-shifting protocol. Each is flag-gated `false`, each
+degrades independently, and the proxy Core is never touched.
+
+```
+DpiMesh ──(real outcomes)──> GeneticEngine ──(best genome)──> ChaosProtocol
+    ^                                                            │
+    └──────────────(probe outcome via EventBus)────────────────┘
+```
+
+| Engine | Flag | What it does | Where |
+|---|---|---|---|
+| Chaos Protocol | `CHAOS_PROTOCOL_ENABLED` | Wire shape rotates HTTP/2→WS→gRPC→QUIC-like every 30–90 s; both sides derive the schedule from `HMAC-SHA256(CHAOS_SECRET, floor(now/30s))`; 4-byte control frame hidden in TLS-like record padding; loopback self-play proves it over real TCP | `engines/chaos/` |
+| DpiMesh | `DPI_MESH_ENABLED` | Crowd-sourced DPI map in SQLite; ISP/region stored ONLY as salted hashes (no IP, no user ID); 5-min aggregation produces per-(ISP,region) policies with confidence; 24 h retention + 10 MB volume guard | `engines/mesh/` |
+| GeneticEngine | `GENETIC_ENGINE_ENABLED` | 20 genomes, tournament-3 selection, single-point crossover, 5 % mutation (crypto-grade `secrets`), 6 h evolve cadence, fitness from DpiMesh outcomes | `engines/genetic/` |
+| Synergy | `SYNERGY_ENABLED` | The coordination loop above; every step isolated — one engine failing never stops the others. With it OFF the three still cooperate over the EventBus | `engines/synergy/` |
+
+**UI:** an *Evolution* tab (engines status, the DpiMesh map, the genome
+table with fitness bars, the per-generation evolution chart and a Force
+Evolution button). The tab is hidden while **all** engine flags are false
+and nothing was hot-enabled — the default deployment looks exactly like
+before.
+
+**APIs (all additive):** `POST /api/mesh/report`, `GET /api/mesh/policy`,
+`GET /api/chaos/status`, `GET /api/genetic/population`,
+`GET /api/genetic/status`, `POST /api/genetic/evolve`,
+`GET /api/synergy/status` — see `docs/API.md`.
+
+Railway notes: SQLite files live in the engine data dir (the `/data`
+volume — no external database, stdlib `sqlite3` only, zero new
+dependencies); CPU is a 6-hour spike of a few ms (genetic) plus one HMAC
+per window per chaos session; RAM stays under the 5 MB budget via the
+LRU session cap. Volume-full behaviour is degraded mode with last-known-
+good policies — never a Core failure (see `tests/test_evolution_engines.py`,
+Test 7).

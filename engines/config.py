@@ -222,6 +222,30 @@ class EngineEnv:
     xray_binary: str = ""                          # EMUNEL_XRAY_BINARY (pinned runtime)
     xray_sha256: str = ""                          # EMUNEL_XRAY_SHA256
 
+    # ── Evolution engines (Chaos / DpiMesh / Genetic / Synergy) — ALL OFF ──
+    # Operator spec: every one of these flags defaults to false, so a
+    # deployment that never sets them behaves byte-identically to before.
+    chaos_on: bool = False                        # CHAOS_PROTOCOL_ENABLED
+    mesh_on: bool = False                         # DPI_MESH_ENABLED
+    genetic_on: bool = False                      # GENETIC_ENGINE_ENABLED
+    synergy_on: bool = False                      # SYNERGY_ENABLED
+
+    chaos_secret: str = "change_me_please"        # CHAOS_SECRET
+    chaos_tick_ms: int = 30_000                    # CHAOS_TICK_MS (30-90s)
+    chaos_max_sessions: int = 1024                 # CHAOS_MAX_SESSIONS
+
+    mesh_salt: str = "change_me_please"            # MESH_SALT
+    mesh_aggregate_interval_sec: int = 300         # MESH_AGGREGATE_INTERVAL_SEC
+    mesh_retention_hours: int = 24                 # MESH_RETENTION_HOURS
+    mesh_max_db_mb: int = 10                       # MESH_MAX_DB_MB
+
+    genetic_population_size: int = 20              # GENETIC_POPULATION_SIZE
+    genetic_mutation_rate: float = 0.05            # GENETIC_MUTATION_RATE
+    genetic_evolve_interval_sec: int = 21_600      # GENETIC_EVOLVE_INTERVAL_SEC (6h)
+    genetic_max_db_mb: int = 1                      # GENETIC_MAX_DB_MB
+
+    synergy_loop_sec: int = 300                     # SYNERGY_LOOP_SEC
+
     # ── runtime info (not env) ─────────────────────────────────────────────
     host: str = "console"                      # which process we run in
     explicit_off: set = field(default_factory=set)   # env kill-switches (EMUNEL_ENGINE_*_ENABLED=0)
@@ -236,7 +260,8 @@ class EngineEnv:
 # below is the execution order for the frame pipeline.
 DEFAULT_PIPELINE = ("Coalesce,Morph,Compress,PreConnect,FEC,Congestion,"
                    "SessionResumption,FakeHandshake,SplitTunnel,"
-                   "SNIRotation,DomainFronting,PortHopping,SNISpoof,Reality")
+                   "SNIRotation,DomainFronting,PortHopping,SNISpoof,Reality,"
+                   "Chaos,Mesh,Genetic,Synergy")
 
 # engine NAME -> enable-flag env var (hot toggles may override a missing
 # default, but an explicit =0 in the environment is a hard kill-switch)
@@ -255,6 +280,11 @@ ENGINE_FLAG_VARS = {
     "PortHopping": "EMUNEL_ENGINE_PORT_HOPPING_ENABLED",
     "SNISpoof": "EMUNEL_ENGINE_SNI_SPOOF_ENABLED",
     "Reality": "EMUNEL_ENGINE_REALITY_ENABLED",
+    # Evolution engines — the operator spec's flag names, verbatim
+    "Chaos": "CHAOS_PROTOCOL_ENABLED",
+    "Mesh": "DPI_MESH_ENABLED",
+    "Genetic": "GENETIC_ENGINE_ENABLED",
+    "Synergy": "SYNERGY_ENABLED",
 }
 
 DEFAULT_SNI_POOL = "cdnjs.cloudflare.com,www.hcaptcha.com,auth.vercel.com,www.google.com"
@@ -363,6 +393,27 @@ def parse_env(host: str = "console") -> EngineEnv:
 
         split_domains=_csv("EMUNEL_SPLIT_DOMAINS", DEFAULT_SPLIT_DOMAINS),
         split_ip_cidrs=_csv("EMUNEL_SPLIT_IP_CIDRS", ""),
+
+        chaos_on=_bool("CHAOS_PROTOCOL_ENABLED", False),
+        mesh_on=_bool("DPI_MESH_ENABLED", False),
+        genetic_on=_bool("GENETIC_ENGINE_ENABLED", False),
+        synergy_on=_bool("SYNERGY_ENABLED", False),
+
+        chaos_secret=_str("CHAOS_SECRET", "change_me_please") or "change_me_please",
+        chaos_tick_ms=max(100, _int("CHAOS_TICK_MS", 30_000)),
+        chaos_max_sessions=max(8, _int("CHAOS_MAX_SESSIONS", 1024)),
+
+        mesh_salt=_str("MESH_SALT", "change_me_please") or "change_me_please",
+        mesh_aggregate_interval_sec=max(5, _int("MESH_AGGREGATE_INTERVAL_SEC", 300)),
+        mesh_retention_hours=max(1, _int("MESH_RETENTION_HOURS", 24)),
+        mesh_max_db_mb=max(1, _int("MESH_MAX_DB_MB", 10)),
+
+        genetic_population_size=min(64, max(4, _int("GENETIC_POPULATION_SIZE", 20))),
+        genetic_mutation_rate=min(1.0, max(0.0, _float("GENETIC_MUTATION_RATE", 0.05))),
+        genetic_evolve_interval_sec=max(1, _int("GENETIC_EVOLVE_INTERVAL_SEC", 21_600)),
+        genetic_max_db_mb=max(1, _int("GENETIC_MAX_DB_MB", 1)),
+
+        synergy_loop_sec=max(1, _int("SYNERGY_LOOP_SEC", 300)),
 
         host=host,
     )

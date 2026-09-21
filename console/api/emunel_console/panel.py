@@ -226,6 +226,7 @@ plus:'<path d="M12 5v14M5 12h14"/>',gear:'<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5
 menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
 eng:'<path d="M3 12h3.5l2.5-7 4 14 2.5-7H21"/>',
 byp:'<path d="M12 3l7 3v5c0 4.5-3 7.7-7 9-4-1.3-7-4.5-7-9V6z"/><path d="M13 7l-3.2 4.6h2.4l-2 4.8 4.3-5.8h-2.3z"/>',
+evo:'<path d="M4 6c5-4 11 4 16 0M4 12c5-4 11 4 16 0M4 18c5-4 11 4 16 0"/>',
 vol:'<path d="M12 3v18M8 7v10M16 7v10M20 10v4M4 10v4"/>',
 gh:'<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" fill="currentColor" stroke="none"/>',
 tg:'<path d="M21.9 4.6 18.9 19c-.2 1-.8 1.2-1.7.8l-4.6-3.4-2.2 2.1c-.3.3-.5.5-1 .5l.4-4.7L18.6 6c.4-.3-.1-.5-.6-.2L7.3 12.4l-4.3-1.4c-.9-.3-.9-.9.2-1.3L20.7 3.3c.8-.3 1.5.2 1.2 1.3Z" fill="currentColor" stroke="none"/>'};
@@ -236,6 +237,10 @@ var MARK_L='<svg viewBox="0 0 32 32" fill="none">'+MARK_IN+"</svg>";
 
 // ───────────────────────────── shell/state ─────────────────────────────
 var USER=null, cleanup=null, pollTimer=null, LINKS={github:"https://github.com/EMUEM/EMUNEL",telegram:""}, BUILD_STAMP="__EMUNEL_BUILD__";
+// Evolution tab visibility — set once at boot from /api/synergy/status;
+// stays false (tab hidden) while every evolution engine flag is off and
+// nothing was hot-enabled, exactly as the operator spec requires.
+var EVO={visible:false};
 function setCleanup(fn){if(cleanup)cleanup();cleanup=fn||null}
 function stopPoll(){if(pollTimer){if(pollTimer.stop)pollTimer.stop();else clearInterval(pollTimer);pollTimer=null}}
 // Resilient polling: skips overlapping runs, pauses while the tab is hidden
@@ -274,6 +279,7 @@ function shell(nav){
     (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+' Admin</button>'+
       '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+' Engines</button>'+
       '<button class="ni '+(nav==="bypass"?"act":"")+'" data-nav="bypass">'+ic("byp")+' Bypass</button>':"")+
+    (USER.is_admin&&EVO.visible?'<button class="ni '+(nav==="evolution"?"act":"")+'" data-nav="evolution">'+ic("evo")+' Evolution</button>':"")+
     (LINKS.github?'<a class="ni" href="'+LINKS.github+'" target="_blank" rel="noopener">'+ic("gh")+' GitHub</a>':"")+
     (LINKS.telegram?'<a class="ni" href="'+esc(LINKS.telegram)+'" target="_blank" rel="noopener">'+ic("tg")+' Telegram</a>':"")+
     '<div style="padding:6px 8px"><span class="free"><span class="fdot"></span>Free</span></div>'+
@@ -289,6 +295,7 @@ function shell(nav){
     (USER.is_admin?'<button class="ni '+(nav==="admin"?"act":"")+'" data-nav="admin">'+ic("gear")+'<span>Admin</span></button>'+
       '<button class="ni '+(nav==="engines"?"act":"")+'" data-nav="engines">'+ic("eng")+'<span>Engines</span></button>'+
       '<button class="ni '+(nav==="bypass"?"act":"")+'" data-nav="bypass">'+ic("byp")+'<span>Bypass</span></button>':"")+
+    (USER.is_admin&&EVO.visible?'<button class="ni '+(nav==="evolution"?"act":"")+'" data-nav="evolution">'+ic("evo")+'<span>Evolution</span></button>':"")+
     '</nav></div></div>';
   var lg=$("#lg");if(lg)lg.onclick=logout;
   var lgm=$("#lgm");if(lgm)lgm.onclick=logout;
@@ -301,7 +308,7 @@ function shell(nav){
     b.onclick=function(){window.__closeDrawer();nav_(b.dataset.nav)}});
 }
 function nav_(name){stopPoll();setCleanup(null);
-  if(name==="dash")viewDash();else if(name==="new")viewWizard();else if(name==="engines")viewEngines();else if(name==="bypass")viewBypass();else if(name==="admin")viewAdmin()}
+  if(name==="dash")viewDash();else if(name==="new")viewWizard();else if(name==="engines")viewEngines();else if(name==="bypass")viewBypass();else if(name==="evolution")viewEvolution();else if(name==="admin")viewAdmin()}
 function logout(){api("POST","/auth/logout").then(function(){render()})}
 function closeDrawer(){var w=window.__closeDrawer;if(w)w()}
 // ───────────────────────────── login ─────────────────────────────
@@ -1068,13 +1075,113 @@ function viewBypass(){
   loadHead();loadSni();loadReality();
   pollTimer=poll(20000,function(){loadHead();return loadReality()});
 }
+// ───────────────────────────── evolution (Chaos + DpiMesh + Genetic) ─────────────────────────────
+function viewEvolution(){
+  shell("evolution");
+  var v=$("#view");
+  v.innerHTML='<div class="ph"><div><h1>Evolution</h1>'+
+    '<div class="sub">Self-completing engine system — DpiMesh collects crowd-sourced DPI outcomes, GeneticEngine evolves protocol genomes from them, ChaosProtocol executes the winner. Every engine is flag-gated and falls back independently; the proxy Core is never modified.</div></div>'+
+    '<div class="ha"><button class="btn sm" id="evo-rf">Refresh</button>'+
+    '<button class="btn sm pri" id="evo-fe">Force Evolution</button></div></div>'+
+    '<div class="sgs" id="evo-s"></div>'+
+    '<div class="card" id="evo-eng"></div>'+
+    '<div class="card" style="margin-top:14px" id="evo-map"></div>'+
+    '<div class="card" style="margin-top:14px;padding:0;overflow-x:auto" id="evo-gen"></div>'+
+    '<div class="card" style="margin-top:14px" id="evo-chart"></div>';
+  function evoSg(l,val,c){var s=String(val);
+    return '<div class="sg"><div class="l">'+l+'</div><div class="v" style="font-size:'+(s.length>18?"13px":"18px")+';'+(c?"color:"+c:"")+'">'+esc(s)+"</div></div>"}
+  function evoChip(ok,label){return '<span class="chip" style="color:'+(ok?"var(--grn)":"var(--fnt)")+';border-color:'+(ok?"var(--grn)":"var(--bd2)")+'">'+(label||(ok?"Active":"Inactive"))+"</span>"}
+  function evoBar(pct,c){pct=Math.max(0,Math.min(100,Math.round(pct)));
+    return '<div style="background:var(--bd2);border-radius:4px;height:8px;min-width:70px;flex:1"><div style="width:'+pct+'%;height:8px;border-radius:4px;background:'+(c||"var(--grn)")+'"></div></div>'}
+  function loadHead(){
+    api("GET","/api/synergy/status").then(function(d){
+      var f=d.flags||{},e=d.engines||{};
+      var on=[["Chaos Protocol",f.chaos,e.Chaos],["DpiMesh",f.mesh,e.Mesh],["GeneticEngine",f.genetic,e.Genetic],["Synergy",f.synergy,e.Synergy]];
+      var nOn=on.filter(function(x){return x[2]&&x[2].active}).length;
+      $("#evo-s").innerHTML=
+        evoSg("Engines active",nOn+" / 4",nOn?"var(--grn)":"")+
+        evoSg("Env flags",["chaos","mesh","genetic","synergy"].filter(function(k){return f[k]}).length+" / 4")+
+        evoSg("Synergy cycles",(d.cycle&&d.cycle.cycles)||0)+
+        evoSg("Cycle errors",(d.cycle&&d.cycle.errors_total)||0,((d.cycle&&d.cycle.errors_total)||0)>0?"var(--amb)":"");
+      $("#evo-eng").innerHTML='<h3 style="margin:0 0 10px">Engine status</h3>'+
+        '<div class="kv">'+on.map(function(x){
+          var st=x[2]||{};
+          return '<div class="it"><div class="k">'+x[0]+'</div><div class="v">'+
+            evoChip(!!(st.active))+' <span class="ftx" style="font-size:11px">'+esc(st.reason||"")+"</span></div></div>"})
+        .join("")+'</div>'+
+        ((d.cycle&&d.cycle.last_errors&&Object.keys(d.cycle.last_errors).length)?
+          '<p class="ftx" style="font-size:11px;margin:10px 0 0;color:var(--amb)">last cycle errors: '+esc(JSON.stringify(d.cycle.last_errors))+"</p>":"");
+      var map=d.mesh_map||[];
+      $("#evo-map").innerHTML='<h3 style="margin:0 0 6px">DpiMesh map — ISP \u00d7 Region (privacy-hashed)</h3>'+
+        '<p class="ftx" style="font-size:11px;margin:0 0 10px">Keys are salted hashes — no IP, no user ID, ever. Recommended transport per ISP+region with confidence.</p>'+
+        (map.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>ISP</th><th>Region</th><th>Recommended</th><th>Success</th><th>Latency</th><th>Confidence</th><th>Updated</th></tr></thead><tbody>'+
+        map.map(function(p){var pr=p.params||{};
+          return '<tr><td class="mono">'+esc(p.isp_hash)+"\u2026</td>"+
+          '<td class="mono">'+esc(p.region_hash)+"\u2026</td>"+
+          '<td class="mono">'+esc(p.recommended_protocol)+"</td>"+
+          '<td class="mono">'+(pr.success_rate!=null?Math.round(pr.success_rate*100)+"%":"\u2014")+"</td>"+
+          '<td class="mono">'+(pr.avg_latency_ms!=null?Math.round(pr.avg_latency_ms)+" ms":"\u2014")+"</td>"+
+          '<td>'+evoBar((p.confidence||0)*100)+ ' <span class="mono" style="font-size:11px">'+((p.confidence||0).toFixed(2))+"</span></td>"+
+          '<td class="mono" style="font-size:11px">'+(p.updated_at?new Date(p.updated_at*1000).toLocaleTimeString():"\u2014")+"</td></tr>"}).join("")+
+        "</tbody></table></div>":'<p class="mut" style="margin:8px 0 0;font-size:12.5px">No policies yet — reports build the map after each aggregation sweep (5 min).</p>');
+    }).catch(function(e){toast(e.message,"err")});
+  }
+  function loadGen(){
+    api("GET","/api/genetic/status").then(function(s){
+      api("GET","/api/genetic/population").then(function(p){
+        var pop=p.population||[];
+        $("#evo-gen").innerHTML='<h3 style="margin:0 0 10px;padding:12px 12px 0">Genomes — generation '+(p.generation!=null?p.generation:"\u2014")+" ("+pop.length+" total)</h3>"+
+          (pop.length?'<table class="tbl"><thead><tr><th>ID</th><th>Fitness</th><th>Transport</th><th>Cipher</th><th>FP</th><th>SNI</th><th>MTU</th><th>Pad</th><th>FEC</th><th>Gen</th><th>Parents</th></tr></thead><tbody>'+
+          pop.map(function(g){return '<tr><td class="mono">'+esc(g.id)+"</td>"+
+            '<td style="min-width:110px"><div style="display:flex;align-items:center;gap:6px">'+evoBar((g.fitness||0)*100)+ '<span class="mono" style="font-size:11px">'+(g.fitness!=null?(+g.fitness).toFixed(2):"\u2014")+"</span></div></td>"+
+            '<td class="mono">'+esc(g.transport||"\u2014")+"</td>"+
+            '<td class="mono" style="font-size:11px">'+esc(g.cipher||"\u2014")+"</td>"+
+            '<td class="mono" style="font-size:11px">'+esc(g.fingerprint||"\u2014")+"</td>"+
+            '<td class="mono" style="font-size:11px">'+esc(g.sni_strategy||"\u2014")+"</td>"+
+            '<td class="mono">'+esc(g.mtu!=null?g.mtu:"\u2014")+"</td>"+
+            '<td class="mono">'+esc(g.padding!=null?g.padding:"\u2014")+"</td>"+
+            '<td class="mono">'+(g.fec_ratio!=null?(+g.fec_ratio).toFixed(2):"\u2014")+"</td>"+
+            '<td class="mono">'+esc(g.generation!=null?g.generation:"\u2014")+"</td>"+
+            '<td class="mono" style="font-size:11px">'+esc((g.parent_ids||[]).join("+")||"\u2014")+"</td></tr>"}).join("")+
+            "</tbody></table>":'<p class="mut" style="margin:8px 0 0;font-size:12.5px">Population empty.</p>');
+      }).catch(function(e){toast(e.message,"err")});
+      var hist=(s.history||[]).slice(-40);
+      var mx=Math.max.apply(null,[0.001].concat(hist.map(function(h){return h.best_fitness||0})));
+      $("#evo-chart").innerHTML='<h3 style="margin:0 0 4px">Evolution — best &amp; average fitness per generation</h3>'+
+        (hist.length?'<div style="display:flex;align-items:flex-end;gap:3px;height:90px;margin-top:12px">'+
+          hist.map(function(h){
+            var b=Math.max(2,Math.round((h.best_fitness||0)/mx*90)),a=Math.max(2,Math.round((h.avg_fitness||0)/mx*90));
+            return '<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:1px" title="gen '+h.generation+' — best '+(h.best_fitness||0).toFixed(2)+', avg '+(h.avg_fitness||0).toFixed(2)+'">'+
+              '<div style="height:'+b+'px;background:var(--grn);border-radius:2px"></div>'+
+              '<div style="height:'+a+'px;background:var(--bd2);border-radius:2px"></div></div>'}).join("")+
+          '</div><div class="row" style="gap:14px;margin-top:8px"><span class="ftx" style="font-size:10.5px"><span style="display:inline-block;width:9px;height:9px;background:var(--grn);border-radius:2px;margin-right:4px"></span>best</span><span class="ftx" style="font-size:10.5px"><span style="display:inline-block;width:9px;height:9px;background:var(--bd2);border-radius:2px;margin-right:4px"></span>average</span><span class="ftx" style="font-size:10.5px;margin-left:auto">latest generation: '+esc(hist[hist.length-1].generation)+"</span></div>"
+        :'<p class="mut" style="margin:8px 0 0;font-size:12.5px">No generations yet — press Force Evolution to breed generation 1.</p>');
+    }).catch(function(e){toast(e.message,"err")});
+  }
+  $("#evo-rf").onclick=function(){loadHead();loadGen()};
+  $("#evo-fe").onclick=function(){
+    var b=$("#evo-fe");b.disabled=true;
+    api("POST","/api/genetic/evolve").then(function(r){
+      b.disabled=false;
+      toast(r&&r.ok?"Evolved to generation "+r.generation:"Evolve: "+((r&&r.reason)||"failed"),r&&r.ok?"ok":"err");
+      loadHead();loadGen();
+    }).catch(function(e){b.disabled=false;toast(e.message,"err")})};
+  loadHead();loadGen();
+  pollTimer=poll(30000,function(){loadHead();loadGen()});
+}
 // ───────────────────────────── boot ─────────────────────────────
 function render(){
   api("GET","/auth/me").then(function(me){
     if(!me.authenticated){viewLogin();return}
     USER=me.user;CSRF=me.csrf_token;
     if(me.links){LINKS.github=me.links.github||LINKS.github;LINKS.telegram=me.links.telegram||""}
-    viewDash();
+    var boot=function(){viewDash()};
+    // Evolution tab: admin-only, hidden while every evolution engine flag
+    // is false and none was hot-enabled. One best-effort fetch — any
+    // failure keeps the panel exactly as it was.
+    if(USER.is_admin){api("GET","/api/synergy/status").then(function(s){
+      if(s&&s.flags&&(s.flags.chaos||s.flags.mesh||s.flags.genetic||s.flags.synergy||s.any_active))EVO.visible=true;
+    }).catch(function(){}).then(boot)}else boot();
   }).catch(function(e){
     $("#app").innerHTML='<div class="lw"><div class="lc"><div class="card"><b>EMUNEL Console failed to load</b><p class="mut">'+esc(e.message)+"</p></div></div></div>";
   });
