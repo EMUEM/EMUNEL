@@ -28,6 +28,7 @@ import json
 import secrets
 import sys
 import time
+from pathlib import Path
 
 
 def _install_dial_hook(manager):
@@ -57,6 +58,16 @@ def _install_dial_hook(manager):
 
 def _remove_dial_hook(original) -> None:
     asyncio.open_connection = original
+
+
+def _per_instance_data_dir(state_path: str) -> str:
+    """The Core's OWN engine state dir: a sibling `engines/` directory of the
+    Core's state file. Never the console's shared store — a Core's periodic
+    state flush would otherwise overwrite the console's state.json (and vice
+    versa), destroying engine toggles and metrics on both sides."""
+    from pathlib import Path
+
+    return str(Path(state_path).resolve().parent / "engines")
 
 
 class _CoreHostASGI:
@@ -136,6 +147,16 @@ def main(argv: list[str] | None = None) -> int:
 
         ecfg = get_env("core")
         if ecfg.enabled:
+            # NEVER share the console's engine state: the Core gets its own
+            # store under the instance's data dir (EMUNEL_STATE_PATH's parent).
+            # The worker already points EMUNEL_ENGINE_DATA there; this is the
+            # guarantee for every other launch style.
+            try:
+                per_instance = _per_instance_data_dir(cfg.state_path)
+                Path(per_instance).mkdir(parents=True, exist_ok=True)
+                ecfg.data_dir = per_instance
+            except (OSError, ValueError):
+                pass
             manager = EngineManager("core", cfg=ecfg)
 
             @contextlib.asynccontextmanager

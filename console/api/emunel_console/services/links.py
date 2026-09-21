@@ -576,7 +576,7 @@ async def aggregate_quota(pool, instance_id: str, used_bytes: int) -> dict | Non
     the subscription then stays honestly Unlimited."""
     rows = await pool.fetch(
         "SELECT limit_bytes, expires_at FROM instance_links "
-        "WHERE instance_id = $1 AND active = 1",
+        "WHERE instance_id = $1 AND active = TRUE",   # TRUE: boolean on PG, integer 1 on SQLite
         instance_id,
     )
     total = sum(int(r["limit_bytes"] or 0) for r in rows)

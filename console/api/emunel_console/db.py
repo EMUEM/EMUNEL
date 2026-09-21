@@ -522,8 +522,10 @@ async def _seed_default_admin() -> None:
     from datetime import datetime, timezone
 
     await db.execute(
+        # TRUE (not a bare 1): is_admin is BOOLEAN on PostgreSQL — asyncpg
+        # rejects an integer literal there and the whole console boot fails.
         "INSERT INTO users (id, login, name, is_admin, password_hash, created_at) "
-        "VALUES ($1, 'admin', 'Administrator', 1, $2, $3)",
+        "VALUES ($1, 'admin', 'Administrator', TRUE, $2, $3)",
         secrets.token_hex(16), hash_password("admin"), datetime.now(timezone.utc),
     )
     log.warning("seeded default account admin/admin — change the password "

@@ -249,18 +249,100 @@ class DockerDriver(BaseDriver):
 class ProcessDriver(BaseDriver):
     name = "process"
 
+    # Core-host engines -> their enable flags. Mirrors engines/config.py's
+    # CORE_HOST_ENGINES / ENGINE_FLAG_VARS (the worker deliberately does NOT
+    # import the engines package — it must stay import-lean).
+    CORE_ENGINE_FLAGS = {
+        "PreConnect": "EMUNEL_ENGINE_PRECONNECT_ENABLED",
+        "Congestion": "EMUNEL_ENGINE_CONGESTION_ENABLED",
+        "Compress": "EMUNEL_ENGINE_COMPRESS_ENABLED",
+        "FEC": "EMUNEL_ENGINE_FEC_ENABLED",
+    }
+
     def __init__(self, ports: PortAllocator, data_root: Path, core_cmd: list[str] | None = None):
         super().__init__(ports, data_root)
         # Default: run Core with its own venv so its dependencies (cryptography
-        # etc.) resolve independently of the worker's environment.
-        # EMUNEL_CORE_MODULE lets the engines layer substitute its host wrapper
-        # (engines.core_host — Core still runs verbatim inside it); unset the
-        # value stays "emunel_core", the exact previous behaviour.
-        self.core_cmd = core_cmd or [
-            os.environ.get("EMUNEL_CORE_PYTHON", ".venv/bin/python"),
-            "-m", os.environ.get("EMUNEL_CORE_MODULE", "emunel_core"),
-        ]
+        # etc.) resolve independently of the worker's environment. The module
+        # (raw Core vs engines.core_host) is decided PER LAUNCH in
+        # _core_launch_module() — env pins, the operator's persisted hot
+        # toggles and the engines kill-switch all flow through there.
+        self.core_python = os.environ.get("EMUNEL_CORE_PYTHON", ".venv/bin/python")
+        self.core_cmd = core_cmd      # full explicit override (tests)
         self.core_cwd = os.environ.get("EMUNEL_CORE_CWD", "")
+
+    # ---- engines host decision ---------------------------------------------
+    def _engines_root(self) -> str:
+        explicit = os.environ.get("EMUNEL_ENGINES_ROOT", "")
+        if explicit:
+            return explicit
+        if self.core_cwd:
+            return str(Path(self.core_cwd).resolve().parent)
+        return ""
+
+    def _engine_toggles(self) -> dict:
+        """The operator's persisted engine hot-toggles (state.json, written
+        by the console's EngineManager on every toggle — shared volume in the
+        unified deployment). Best-effort, stdlib only; {} when unreadable."""
+        import json as _json
+
+        candidates: list[Path] = []
+        env_dir = os.environ.get("EMUNEL_ENGINE_DATA", "")
+        if env_dir:
+            candidates.append(Path(env_dir))
+        worker_data = os.environ.get("EMUNEL_WORKER_DATA", "")
+        if worker_data:
+            candidates.append(Path(worker_data).parent / "engines")
+        candidates.append(Path("/data/engines"))
+        if self.core_cwd:
+            candidates.append(Path(self.core_cwd).resolve().parent / ".emunel-data" / "engines")
+        for base in candidates:
+            try:
+                raw = _json.loads((base / "state.json").read_text(encoding="utf-8"))
+                enabled = ((raw.get("engines") or {}).get("EngineToggles") or {}).get("enabled")
+                if isinstance(enabled, dict):
+                    return {str(k): bool(v) for k, v in enabled.items()
+                            if isinstance(v, bool)}
+            except (OSError, ValueError, AttributeError):
+                continue
+        return {}
+
+    def _core_launch_module(self) -> tuple[str, dict[str, str]]:
+        """Decide the launch module for a Core: raw 'emunel_core' or the
+        engines host 'engines.core_host'. Returns (module, extra_env).
+
+        Precedence (same rules the console's EngineManager applies):
+          1. EMUNEL_ENGINES_ENABLED=0 — engines off entirely, raw Core.
+          2. EMUNEL_CORE_MODULE pinned in this worker's environment (the
+             unified entrypoint's boot pre-check, or the operator) — respected
+             as-is; an explicit 'emunel_core' pin cannot be overridden.
+          3. any core-host engine active — via its env flag OR the
+             operator's persisted hot-toggle — -> engines host, with the
+             toggle decisions translated to EMUNEL_ENGINE_*_ENABLED so the
+             Core's own manager activates the same engines.
+          4. otherwise the raw Core — exactly the previous behaviour."""
+        if os.environ.get("EMUNEL_ENGINES_ENABLED", "1").strip().lower() in ("0", "false", "no", "off"):
+            return os.environ.get("EMUNEL_CORE_MODULE", "") or "emunel_core", {}
+        pinned = os.environ.get("EMUNEL_CORE_MODULE", "")
+        if pinned:
+            return pinned, {}
+        toggles = self._engine_toggles()
+        extra: dict[str, str] = {}
+        want_host = False
+        for name, flag in self.CORE_ENGINE_FLAGS.items():
+            raw = os.environ.get(flag, "")
+            env_off = raw.strip().lower() in ("0", "false", "no", "off")
+            env_on = raw.strip().lower() in ("1", "true", "yes", "on")
+            if env_off:
+                extra[flag] = "0"          # env kill-switch wins, same as console
+                continue
+            if toggles.get(name, False) or env_on:
+                want_host = True
+                extra[flag] = "1"
+            elif name in toggles:           # explicitly hot-disabled by operator
+                extra[flag] = "0"
+        if not want_host:
+            return "emunel_core", {}
+        return "engines.core_host", extra
 
     def _limits(self, spec: LaunchSpec):
         import resource
@@ -298,20 +380,25 @@ class ProcessDriver(BaseDriver):
             "PORT": str(port),
         })
         env.pop("PYTHONPATH", None)  # never leak worker deps into Core
-        # Engines: when Core is launched through the engines host it needs the
-        # repo root on sys.path to import the engines package — and nothing
-        # else (no worker deps leak; the engines layer is part of the app).
-        if os.environ.get("EMUNEL_CORE_MODULE", "emunel_core") != "emunel_core":
-            engines_root = os.environ.get("EMUNEL_ENGINES_ROOT", "")
-            if not engines_root and self.core_cwd:
-                engines_root = str(Path(self.core_cwd).resolve().parent)
+        # Engines: per-launch decision (env pins + the operator's persisted
+        # hot-toggles). Through the engines host the Core needs the repo root
+        # on sys.path to import the engines package — and nothing else (no
+        # worker deps leak). Each instance gets its OWN engine state dir so
+        # a Core can never clobber the console's shared state.json (nor the
+        # other way around).
+        core_module, engine_flags = self._core_launch_module()
+        if core_module != "emunel_core":
+            engines_root = self._engines_root()
             if engines_root:
                 env["PYTHONPATH"] = engines_root
+            env["EMUNEL_ENGINE_DATA"] = str(data_dir / "engines")
+            env.update(engine_flags)
+        core_cmd = self.core_cmd or [self.core_python, "-m", core_module]
 
         out_path = data_dir / "core.log"
         out_fh = out_path.open("ab", buffering=0)
         proc = await asyncio.create_subprocess_exec(
-            *self.core_cmd, "--port", str(port),
+            *core_cmd, "--port", str(port),
             stdout=out_fh, stderr=subprocess.STDOUT,
             env=env, preexec_fn=self._limits(spec), start_new_session=True,
             cwd=self.core_cwd or None,

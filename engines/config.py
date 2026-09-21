@@ -310,6 +310,27 @@ DEFAULT_SNI_POOL = "cdnjs.cloudflare.com,www.hcaptcha.com,auth.vercel.com,www.go
 DEFAULT_REALITY_SHORT_IDS = ",0123456789abcdef"
 
 
+# Engines that run inside the Core host (engines.core_host). The unified
+# entrypoint (main.py) asks core_host_module() BEFORE spawning the embedded
+# worker, because the worker captures a copy of the environment at its own
+# boot — setting EMUNEL_CORE_MODULE later (in engines.host.wrap_console)
+# was invisible to it, so core-side engines could never actually run.
+CORE_HOST_ENGINES = ("PreConnect", "Congestion", "Compress", "FEC")
+
+
+def core_host_module() -> str:
+    """"engines.core_host" when any core-host engine is env-enabled at boot,
+    "" otherwise (the hot-toggle path is decided per launch by the worker,
+    which re-reads the operator's persisted toggles)."""
+    if not _bool("EMUNEL_ENGINES_ENABLED", True):
+        return ""
+    for name in CORE_HOST_ENGINES:
+        var = ENGINE_FLAG_VARS.get(name, f"EMUNEL_ENGINE_{name.upper()}_ENABLED")
+        if _bool(var, False):
+            return "engines.core_host"
+    return ""
+
+
 def parse_env(host: str = "console") -> EngineEnv:
     """Snapshot all engine environment variables into an EngineEnv."""
     pipeline_raw = os.environ.get("EMUNEL_PIPELINE_ORDER") or os.environ.get("PIPELINE_ORDER") or ""

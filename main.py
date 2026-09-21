@@ -198,6 +198,26 @@ def setup() -> None:
     os.environ.setdefault("EMUNEL_CORE_PYTHON", sys.executable)
     os.environ.setdefault("EMUNEL_CORE_CWD", str(ROOT / "core"))
 
+    # ── EMUNEL Engines: core-launch module decision ─────────────────────
+    # Must happen BEFORE the worker subprocess below inherits the
+    # environment. engines.host.wrap_console sets the same variable, but it
+    # runs after this function returns — too late for a worker that already
+    # copied the old environment. Without this, core-host engines
+    # (PreConnect / Congestion / Compress / FEC) could never actually run in
+    # instances on the unified single-service deployment. Best effort: any
+    # failure keeps the previous behaviour (raw Core, engines off).
+    try:
+        sys.path.insert(0, str(ROOT))
+        from engines.config import core_host_module
+
+        _core_module = core_host_module()
+        if _core_module:
+            os.environ["EMUNEL_CORE_MODULE"] = _core_module
+            os.environ.setdefault("EMUNEL_ENGINES_ROOT", str(ROOT))
+    except Exception as _core_host_exc:
+        print(f"[emunel] note: engines core-host pre-check skipped "
+              f"({_core_host_exc}) — Cores launch without engines", file=sys.stderr)
+
     # ---- embedded worker ---------------------------------------------------
     worker_env = os.environ.copy()
     worker_env["EMUNEL_WORKER_HOST"] = "127.0.0.1"

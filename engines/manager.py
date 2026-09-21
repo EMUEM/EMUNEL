@@ -132,7 +132,8 @@ class EngineManager:
             return False
         engine.status.enabled = True
         if self.host not in cls.HOSTS:
-            engine.status.reason = f"not applicable in {self.host} host"
+            hint = (" — runs inside instances" if self.host == "console" else "")
+            engine.status.reason = f"not applicable in {self.host} host{hint}"
             self.engines[name] = engine
             return False
         reason = self._env_disabled_reason(cls, name, force=force)
@@ -249,8 +250,22 @@ class EngineManager:
                 return True, "already active"
             # instantiate through the normal path (idempotent)
             was_active = await self._activate(canonical, force=True)
+            # Persist the operator's intent REGARDLESS of this host's
+            # applicability: core-host engines (FEC, PreConnect, Congestion,
+            # Compress) hot-enabled from the console cannot be active HERE,
+            # but the worker reads this persisted toggle and launches instance
+            # Cores through engines.core_host with the engine turned on.
             if not was_active and canonical in self.engines:
-                return False, self.engines[canonical].status.reason or "cannot activate"
+                reason = self.engines[canonical].status.reason or "cannot activate"
+                not_applicable = "not applicable" in reason
+                if not_applicable:
+                    self._rebuild()
+                    self._record_toggle(canonical, True)
+                    self.bus.publish("engine.lifecycle",
+                                      {"action": "enable-core-host", "name": canonical})
+                    return True, ("enabled — runs inside instances "
+                                  "(not applicable on the console host)")
+                return False, reason
             self._rebuild()
             self._record_toggle(canonical, True)
             self.bus.publish("engine.lifecycle", {"action": "enable", "name": canonical})

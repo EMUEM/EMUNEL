@@ -17,6 +17,13 @@ client ──▶ Console (public $PORT)
   the Core through `python -m engines.core_host`, which serves the
   UNMODIFIED Core app plus one dial hook (warm pool + measurement). No
   file under `core/emunel_core/` changes, ever.
+  The launch decision is made PER INSTANCE LAUNCH by the worker from two
+  signals: `EMUNEL_ENGINE_<NAME>_ENABLED` env flags and the operator's
+  persisted panel toggles (state.json, written immediately on every hot
+  enable/disable). Hot-enabling **FEC / PreConnect / Congestion / Compress**
+  in Engine Settings therefore applies to every instance deployed or
+  relaunched afterwards — no restart needed. Each Core gets its OWN engine
+  state dir (`<instance-data>/engines/`), never the console's shared store.
 * **Never-crash contract** — an engine that raises is bypassed for the
   batch; after `EMUNEL_ENGINE_BYPASS_ERRORS` consecutive failures it is
   disabled for `EMUNEL_ENGINE_BYPASS_COOLDOWN_SEC`. With

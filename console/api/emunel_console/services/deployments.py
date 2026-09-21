@@ -373,10 +373,14 @@ async def _provision_default_link(pool: asyncpg.Pool, deployment_id: str,
                                f"Skipped {pretty} link — {detail}", "warn")
                     continue
                 link_uuid = resp.json()["uuid"]
+                # `active` is BOOLEAN on PostgreSQL and INTEGER on SQLite —
+                # the TRUE keyword is valid in BOTH dialects (SQLite >= 3.23),
+                # a bare 1 crashes asyncpg with DatatypeMismatchError and
+                # fails the whole deployment at this final stage.
                 await pool.execute(
                     "INSERT INTO instance_links (id, instance_id, link_uuid, label, protocol, "
                     "limit_bytes, expires_at, speed_limit_bytes, ip_limit, active, used_cache, "
-                    "used_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 0, NULL, $10)",
+                    "used_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, 0, NULL, $10)",
                     secrets.token_hex(16), instance_id, link_uuid,
                     f"{row['name']} · {pretty}", proto,
                     int(policy.get("limit_bytes") or 0) or None,
