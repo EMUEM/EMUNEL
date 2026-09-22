@@ -27,6 +27,9 @@ from ..genetic import GeneticEngine
 from ..synergy import SynergyEngine
 # SNI Enhanced (stateful DPI evasion — flag-gated OFF by default)
 from ..sni_enhanced import SNIEnhancedEngine
+# Consolidated modules (STABILIZATION stage 2 — flag-gated OFF by default)
+from ..consolidated import (LearningEngine, PayloadEngine,
+                            TrafficShapingEngine, TransportEngine)
 
 REGISTRY: dict[str, type] = {
     "Coalesce": CoalescingEngine,
@@ -51,6 +54,12 @@ REGISTRY: dict[str, type] = {
     "Synergy": SynergyEngine,
     # SNI Enhanced — SNI_ENHANCED_ENABLED (default false)
     "SNIEnhanced": SNIEnhancedEngine,
+    # Merged modules — TRAFFIC_SHAPING_MERGED / TRANSPORT_MERGED /
+    # LEARNING_MERGED / PAYLOAD_MERGED (all default false)
+    "TrafficShaping": TrafficShapingEngine,
+    "Transport": TransportEngine,
+    "Learning": LearningEngine,
+    "Payload": PayloadEngine,
 }
 
 __all__ = ["REGISTRY"]

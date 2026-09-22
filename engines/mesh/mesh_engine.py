@@ -139,13 +139,24 @@ class MeshEngine(Engine):
         from ..synergy import peers
 
         try:
-            path = Path(self.cfg.data_dir) / "mesh.db"
-            self.db = sqlite3.connect(str(path), check_same_thread=False,
-                                      timeout=2.0)
-            self.db.execute("PRAGMA journal_mode=WAL")
-            self.db.execute("PRAGMA synchronous=NORMAL")
-            self.db.executescript(SCHEMA)
-            self.db.commit()
+            # consolidated mode (LearningEngine): the facade hands us ONE
+            # shared SQLite connection so Mesh + Genetic live in a single
+            # file — legacy standalone mode keeps its own mesh.db
+            shared = getattr(self, "shared_db", None)
+            if shared is not None:
+                self.db = shared
+                self._db_file = ""
+                self.db.executescript(SCHEMA)
+                self.db.commit()
+            else:
+                path = Path(self.cfg.data_dir) / "mesh.db"
+                self._db_file = str(path)
+                self.db = sqlite3.connect(str(path), check_same_thread=False,
+                                          timeout=2.0)
+                self.db.execute("PRAGMA journal_mode=WAL")
+                self.db.execute("PRAGMA synchronous=NORMAL")
+                self.db.executescript(SCHEMA)
+                self.db.commit()
         except sqlite3.Error as exc:
             # storage broken: degrade instead of failing the host
             self._enter_degraded(f"sqlite open failed: {exc}")
@@ -173,8 +184,10 @@ class MeshEngine(Engine):
             from ..synergy import peers
             peers.unregister("Mesh", self)
         if self.db is not None:
-            with contextlib.suppress(sqlite3.Error):
-                self.db.close()
+            # a shared connection belongs to the facade — never close it here
+            if getattr(self, "shared_db", None) is None:
+                with contextlib.suppress(sqlite3.Error):
+                    self.db.close()
             self.db = None
 
     # ---- ingest -------------------------------------------------------------
@@ -395,7 +408,13 @@ class MeshEngine(Engine):
         if self.db is None:
             return True
         try:
-            base = Path(self.cfg.data_dir) / "mesh.db"
+            # shared-db mode (LearningEngine): the facade owns the file and
+            # runs its own checkpoint/rotation — the per-engine guard only
+            # applies to the standalone mesh.db
+            if getattr(self, "shared_db", None) is not None:
+                return False
+            base = Path(getattr(self, "_db_file", None)
+                        or Path(self.cfg.data_dir) / "mesh.db")
             if not base.exists():
                 return False
             # WAL mode: recent writes live in the -wal sidecar — count the

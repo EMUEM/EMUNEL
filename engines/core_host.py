@@ -44,6 +44,20 @@ def _install_dial_hook(manager):
                 return warm
         result = await original(host, port, *args, **kwargs)
         try:
+            # PreConnect bookkeeping: remember the dialed destination and,
+            # for repeat targets, warm ONE extra connection in the
+            # background so the NEXT dial skips the TCP handshake. The
+            # speculative dial goes through `original` — it can never
+            # recurse into this hook (STABILIZATION: the pool used to stay
+            # forever empty because nothing ever produced warm entries).
+            if preconnect is not None and preconnect.status.active:
+                preconnect.note_dial(host, port)
+                if preconnect.should_warm(host, port):
+                    asyncio.get_running_loop().create_task(
+                        preconnect.warm(original, host, port))
+        except Exception:
+            pass
+        try:
             congestion = manager.engines.get("Congestion")
             if congestion is not None and congestion.status.active:
                 writer = result[1] if isinstance(result, tuple) else None

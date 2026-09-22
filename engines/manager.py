@@ -24,6 +24,8 @@ from .state import EngineStateStore
 
 # registry name -> (class, host affinity) filled by engines/engines/__init__.py
 from .engines import REGISTRY
+# merged modules (STABILIZATION stage 2) — substitution + fallback tables
+from .consolidated import CHILD_TO_GROUP, MERGED_MODULES
 
 # State-store key holding the operator's hot-toggle decisions. Engines enabled
 # or disabled from the panel survive process restarts (Railway redeploys and
@@ -47,6 +49,36 @@ class EngineManager:
         self._running = False
         self._op_limiter = _OpsLimiter(self.cfg.max_ops_per_sec)
         self._toggle_hooks: list[Callable] = []
+        # STABILIZATION: OOM guard + rotating backups (both never-crash)
+        self.mem_guard = None
+        self.backup = None
+        self.active_order: list[str] = []
+
+    # ---- merged-module substitution (STABILIZATION stage 2) -----------------
+    def _effective_order(self) -> list[str]:
+        """Pipeline order with merged modules substituted in: when a group's
+        flag is on, the module takes the position of its FIRST child and
+        every later child of that group is skipped as an individual engine
+        (they run INSIDE the module). Merged entries at the tail of the raw
+        order are only kept when their flag is on and not already placed."""
+        order: list[str] = []
+        placed: set[str] = set()
+        for name in self.cfg.pipeline_order:
+            if name in MERGED_MODULES:
+                if getattr(self.cfg, MERGED_MODULES[name]["flag"], False) \
+                        and name not in placed:
+                    order.append(name)
+                    placed.add(name)
+                continue
+            parent = CHILD_TO_GROUP.get(name)
+            if parent is not None and getattr(
+                    self.cfg, MERGED_MODULES[parent]["flag"], False):
+                if parent not in placed:
+                    order.append(parent)      # first child position
+                    placed.add(parent)
+                continue                        # child runs inside the module
+            order.append(name)
+        return order
 
     # ---- lifecycle --------------------------------------------------------------
     async def start(self) -> None:
@@ -62,11 +94,33 @@ class EngineManager:
 
         self.state.load()
         persisted = self._persisted_toggles()
-        order = [n for n in self.cfg.pipeline_order]
+        order = self._effective_order()
+        self.active_order = list(order)
         for name in order:
             # force=True re-applies the operator's persisted hot-enable (the
             # env kill-switch EMUNEL_ENGINE_*_ENABLED=0 still wins inside)
-            await self._activate(name, force=bool(persisted.get(name)))
+            ok = await self._activate(name, force=bool(persisted.get(name)))
+            if not ok and name in MERGED_MODULES:
+                # MULTI-LAYER FALLBACK (golden rule 4): a merged module that
+                # fails to start must never take the group down — the
+                # legacy engines activate individually in its place.
+                self.bus.publish("engine.lifecycle", {
+                    "action": "merged-module-fallback", "name": name,
+                })
+                self.state.append_log(name,
+                    f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [WARN] {name}: "
+                    "merged module failed — falling back to legacy engines")
+                for child in MERGED_MODULES[name]["children"]:
+                    # force=True: the merged flag expressed intent for the
+                    # WHOLE group, so even default-off children run in the
+                    # fallback (the env kill-switch still wins inside)
+                    await self._activate(child, force=True)
+                # the module's pipeline slot belongs to its children now —
+                # _build_pipelines() runs after this loop and reads this list
+                if name in self.active_order:
+                    idx = self.active_order.index(name)
+                    self.active_order[idx:idx + 1] = [
+                        c for c in MERGED_MODULES[name]["children"]]
         # A persisted disable must also hold when the engine's DEFAULT is on
         # (e.g. Coalesce) — otherwise a restart would silently revert the
         # operator's choice.
@@ -85,6 +139,57 @@ class EngineManager:
             engine.status.enabled = False
             engine.status.reason = "disabled by operator (persisted)"
         self._build_pipelines()
+
+        # STABILIZATION stage 3+1: OOM guard (RSS watchdog with two-level
+        # degradation) — every trim/degrade hook is dynamic so hot-enabled
+        # engines are covered too
+        try:
+            from .oom_guard import MemoryGuard
+
+            def _trim_all_caches():
+                from .api_cache import ttl_cache_clear
+                ttl_cache_clear()
+                for e in self.engines.values():
+                    c = getattr(e, "cache", None)
+                    if c is not None and hasattr(c, "clear"):
+                        try:
+                            c.clear()
+                        except Exception:
+                            pass
+
+            def _drain_all_pools():
+                for e in self.engines.values():
+                    p = getattr(e, "pool", None)
+                    if p is not None and hasattr(p, "drain"):
+                        try:
+                            p.drain()
+                        except Exception:
+                            pass
+
+            self.mem_guard = MemoryGuard(
+                soft_mb=self.cfg.soft_mem_mb, hard_mb=self.cfg.hard_mem_mb,
+                check_sec=self.cfg.mem_check_sec, bus=self.bus)
+            self.mem_guard.on_trim(_trim_all_caches)
+            self.mem_guard.on_degrade(_drain_all_pools)
+            await self.mem_guard.start()
+        except Exception as exc:  # the guard itself must never break boot
+            print(f"[emunel-engines] WARNING: memory guard not started: {exc}",
+                  flush=True)
+
+        # STABILIZATION stage 1.3: rotating state backups — console host only
+        # (per-instance Core state is disposable; the console DB is not)
+        if self.host == "console":
+            try:
+                from .persistence import BackupService
+                self.backup = BackupService(
+                    self.cfg.data_dir,
+                    interval_h=self.cfg.backup_interval_h,
+                    keep=self.cfg.backup_keep,
+                    max_mb=self.cfg.backup_max_mb)
+                await self.backup.start()
+            except Exception as exc:
+                print(f"[emunel-engines] WARNING: backup service not started: {exc}",
+                      flush=True)
 
         # background: state flush + metrics tick (never crash the host)
         self._tasks.append(asyncio.create_task(self._maintenance_loop()))
@@ -115,6 +220,18 @@ class EngineManager:
                 engine.status.reason = "stopped"
         self.state.maybe_flush(force=True)
         self.bus.publish("engine.lifecycle", {"action": "stopped", "host": self.host})
+        # STABILIZATION: guard + backups go down with the manager
+        if self.mem_guard is not None:
+            try:
+                await self.mem_guard.stop()
+            except Exception:
+                pass
+        if self.backup is not None:
+            try:
+                await self.backup.stop()
+            except Exception:
+                pass
+            self.backup = None
 
     async def _activate(self, name: str, force: bool = False) -> bool:
         """Instantiate + start an engine, or record why it can't run.
@@ -130,6 +247,13 @@ class EngineManager:
         except Exception as exc:
             self.bus.publish("engine.error", {"name": name, "error": f"init failed: {exc}"})
             return False
+        # merged facades publish their children by NAME into this manager
+        # (backward compatibility for the API routes) — they need the ref
+        if hasattr(engine, "attach_manager"):
+            try:
+                engine.attach_manager(self)
+            except Exception:
+                pass
         engine.status.enabled = True
         if self.host not in cls.HOSTS:
             hint = (" — runs inside instances" if self.host == "console" else "")
@@ -177,6 +301,19 @@ class EngineManager:
             return f"disabled by env ({var}=0)"
         if force:
             return None
+        if name in MERGED_MODULES:
+            # merged modules are strictly opt-in
+            if not getattr(self.cfg, MERGED_MODULES[name]["flag"], False):
+                return ("off by default (enable in Engine Settings or set "
+                        f"{ENGINE_FLAG_VARS.get(name, name.upper())}=true)")
+            return None
+        parent = CHILD_TO_GROUP.get(name)
+        if parent is not None and not self.cfg.legacy_engines_enabled:
+            # legacy engines of a group are only skipped when the merged
+            # module is NOT taking them over
+            if not getattr(self.cfg, MERGED_MODULES[parent]["flag"], False):
+                return ("legacy engines disabled (LEGACY_ENGINES_ENABLED=false) "
+                        "— enable the merged module or set LEGACY_ENGINES_ENABLED=true")
         key = f"{cls.NAME.lower()}_on"
         if hasattr(self.cfg, key) and not getattr(self.cfg, key):
             return "off by default (enable in Engine Settings — the choice persists)"
@@ -184,7 +321,7 @@ class EngineManager:
 
     def _build_pipelines(self) -> None:
         self.pipelines = {KIND_FRAMES: [], KIND_CONFIGGEN: [], KIND_OUTBOUND: [], KIND_PROBE: []}
-        for name in self.cfg.pipeline_order:
+        for name in (self.active_order or self._effective_order()):
             engine = self.engines.get(name)
             if engine is None or not engine.status.active:
                 continue
@@ -244,6 +381,26 @@ class EngineManager:
         canonical = self._canonical(name)
         if canonical is None:
             return False, "unknown engine"
+        # STABILIZATION stage 2: a child toggled while its merged module is
+        # active routes INTO the module (no double instantiation)
+        parent_name = CHILD_TO_GROUP.get(canonical)
+        if parent_name is not None:
+            parent = self.engines.get(parent_name)
+            if parent is not None and parent.status.active \
+                    and hasattr(parent, "enable_child"):
+                if canonical in parent.children or not enabled:
+                    if enabled:
+                        ok, reason = await parent.enable_child(canonical)
+                    else:
+                        ok, reason = await parent.disable_child(canonical)
+                    self._rebuild()
+                    self._record_toggle(canonical, enabled)
+                    self.bus.publish("engine.lifecycle", {
+                        "action": "enable" if enabled else "disable",
+                        "name": canonical, "inside": parent_name})
+                    return ok, reason
+                # child not instantiated in THIS host (core-host child from
+                # the console) — fall through to the persist-for-worker path
         engine = self.engines.get(canonical)
         if enabled:
             if engine is not None and engine.status.active:
@@ -322,6 +479,12 @@ class EngineManager:
 
     def _rebuild(self) -> None:
         self._build_pipelines()
+        # a toggle invalidates every cached status response instantly
+        try:
+            from .api_cache import ttl_cache_clear
+            ttl_cache_clear()
+        except Exception:
+            pass
         for hook in self._toggle_hooks:
             try:
                 hook()
@@ -375,7 +538,7 @@ class EngineManager:
                 metrics = engine.snapshot_metrics()
             except Exception:
                 metrics = dict(engine.status.metrics)
-            engines_out.append({
+            entry = {
                 "name": name,
                 "title": engine.TITLE,
                 "enabled": engine.status.enabled,
@@ -385,21 +548,45 @@ class EngineManager:
                 "params": params,
                 "metrics": metrics,
                 "breaker": self.breakers[name].stats() if name in self.breakers else {},
-            })
+            }
+            # merged-module view: children published by an active facade
+            # get an "inside" annotation + the module's group view
+            parent_name = CHILD_TO_GROUP.get(name)
+            if parent_name is not None:
+                parent = self.engines.get(parent_name)
+                if parent is not None and parent.status.active \
+                        and getattr(parent, "children", {}).get(name) is engine:
+                    entry["inside"] = parent_name
+                    try:
+                        entry["group"] = parent.group_status()
+                    except Exception:
+                        pass
+            engines_out.append(entry)
         return {
             "host": self.host,
             "enabled": self.cfg.enabled,
             "pipeline_order": self.cfg.pipeline_order,
+            "pipeline_effective": self.active_order or self._effective_order(),
             "pipelines": self.pipelines,
             "engines": engines_out,
             "data_dir": self.state.data_dir(),
             "volume_warning": self.state.volume_warning,
             "bus": self.bus.stats(),
             "uptime": (time.monotonic() - self._started_at) if self._started_at else 0,
+            # STABILIZATION report block (stage 3/4/1 visibility)
+            "stabilization": {
+                "mem_guard": self.mem_guard.status() if self.mem_guard else None,
+                "backup": self.backup.status() if self.backup else None,
+                "legacy_engines_enabled": self.cfg.legacy_engines_enabled,
+                "merged_flags": {
+                    n: getattr(self.cfg, spec["flag"], False)
+                    for n, spec in MERGED_MODULES.items()
+                },
+            },
         }
 
     def _ordered_names(self) -> list[str]:
-        order = [n for n in self.cfg.pipeline_order]
+        order = list(self.active_order or self._effective_order())
         for name in REGISTRY:
             if name not in order:
                 order.append(name)

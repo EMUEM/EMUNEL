@@ -141,13 +141,24 @@ class GeneticEngine(Engine):
         from ..synergy import peers
 
         try:
-            path = Path(self.cfg.data_dir) / "genetic.db"
-            self.db = sqlite3.connect(str(path), check_same_thread=False,
-                                      timeout=2.0)
-            self.db.execute("PRAGMA journal_mode=WAL")
-            self.db.execute("PRAGMA synchronous=NORMAL")
-            self.db.executescript(SCHEMA)
-            self.db.commit()
+            # consolidated mode (LearningEngine): ONE shared SQLite for
+            # Mesh + Genetic (the facade owns the connection) — legacy
+            # standalone mode keeps its own genetic.db
+            shared = getattr(self, "shared_db", None)
+            if shared is not None:
+                self.db = shared
+                self._db_file = ""
+                self.db.executescript(SCHEMA)
+                self.db.commit()
+            else:
+                path = Path(self.cfg.data_dir) / "genetic.db"
+                self._db_file = str(path)
+                self.db = sqlite3.connect(str(path), check_same_thread=False,
+                                          timeout=2.0)
+                self.db.execute("PRAGMA journal_mode=WAL")
+                self.db.execute("PRAGMA synchronous=NORMAL")
+                self.db.executescript(SCHEMA)
+                self.db.commit()
             self._load_or_seed()
         except sqlite3.Error as exc:
             self._enter_degraded(f"sqlite open failed: {exc}")
@@ -176,8 +187,10 @@ class GeneticEngine(Engine):
             from ..synergy import peers
             peers.unregister("Genetic", self)
         if self.db is not None:
-            with contextlib.suppress(sqlite3.Error):
-                self.db.close()
+            # a shared connection belongs to the facade — never close it here
+            if getattr(self, "shared_db", None) is None:
+                with contextlib.suppress(sqlite3.Error):
+                    self.db.close()
             self.db = None
 
     # ---- population store ------------------------------------------------------
@@ -441,7 +454,13 @@ class GeneticEngine(Engine):
 
     def _check_volume(self) -> None:
         try:
-            base = Path(self.cfg.data_dir) / "genetic.db"
+            # shared-db mode (LearningEngine): the facade owns the file and
+            # its checkpoint/rotation — the standalone guard only applies
+            # to the legacy genetic.db
+            if getattr(self, "shared_db", None) is not None:
+                return
+            base = Path(getattr(self, "_db_file", None)
+                        or Path(self.cfg.data_dir) / "genetic.db")
             if not base.exists():
                 return
             # WAL mode: count the -wal sidecar too

@@ -79,7 +79,19 @@ def build_evolution_router(manager) -> APIRouter:
             return JSONResponse(
                 {"detail": "isp and region query params required"},
                 status_code=400)
-        return engine.policy(isp=isp, region=region)
+        # STABILIZATION stage 4.2: policy lookups are cached TTL 60s (spec)
+        # — the mesh aggregates on a 10-minute cadence anyway
+        from .api_cache import ttl_cache_get, ttl_cache_put
+        ttl = max(0.0, getattr(manager.cfg, "mesh_policy_ttl", 60.0))
+        key = f"mesh-policy:{isp[:32]}:{region[:32]}"
+        if ttl > 0:
+            hit = ttl_cache_get(key, ttl)
+            if hit is not None:
+                return hit
+        out = engine.policy(isp=isp, region=region)
+        if ttl > 0:
+            ttl_cache_put(key, out)
+        return out
 
     @router.post("/mesh/report")
     async def mesh_report(request: Request):

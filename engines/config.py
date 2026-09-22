@@ -128,6 +128,26 @@ class EngineEnv:
     preconnect_on: bool = True
     fec_on: bool = False
     congestion_on: bool = True
+
+    # ── STABILIZATION: merged engine modules (spec flags, default false) ──
+    traffic_shaping_merged: bool = False         # TRAFFIC_SHAPING_MERGED
+    transport_merged: bool = False               # TRANSPORT_MERGED
+    learning_merged: bool = False                # LEARNING_MERGED
+    payload_merged: bool = False                 # PAYLOAD_MERGED
+    legacy_engines_enabled: bool = True          # LEGACY_ENGINES_ENABLED
+    # merged-module tunables (spec 3.2 / 4.2)
+    ts_cache_ttl: float = 300.0                  # EMUNEL_TS_CACHE_TTL
+    ts_cache_max: int = 100                      # EMUNEL_TS_CACHE_MAX
+    engines_status_ttl: float = 5.0              # EMUNEL_ENGINES_STATUS_TTL
+    mesh_policy_ttl: float = 60.0                # EMUNEL_MESH_POLICY_TTL
+    # OOM guard (spec 3.1 — Python equivalent of a heap cap)
+    soft_mem_mb: float = 380.0                   # EMUNEL_SOFT_MEM_MB
+    hard_mem_mb: float = 460.0                   # EMUNEL_HARD_MEM_MB
+    mem_check_sec: float = 30.0                  # EMUNEL_MEM_CHECK_SEC
+    # backups (spec 1.3 — cron every 6h, keep 7 rotating copies)
+    backup_interval_h: float = 6.0               # EMUNEL_BACKUP_INTERVAL_H
+    backup_keep: int = 7                         # EMUNEL_BACKUP_KEEP
+    backup_max_mb: float = 64.0                  # EMUNEL_BACKUP_MAX_MB
     session_on: bool = True
     fake_on: bool = True
     split_on: bool = True
@@ -278,7 +298,8 @@ class EngineEnv:
 DEFAULT_PIPELINE = ("Coalesce,Morph,Compress,PreConnect,FEC,Congestion,"
                    "SessionResumption,FakeHandshake,SplitTunnel,"
                    "SNIRotation,DomainFronting,PortHopping,SNISpoof,Reality,"
-                   "Chaos,Mesh,Genetic,Synergy,SNIEnhanced")
+                   "Chaos,Mesh,Genetic,Synergy,SNIEnhanced,"
+                   "TrafficShaping,Transport,Learning,Payload")
 
 # engine NAME -> enable-flag env var (hot toggles may override a missing
 # default, but an explicit =0 in the environment is a hard kill-switch)
@@ -304,6 +325,11 @@ ENGINE_FLAG_VARS = {
     "Synergy": "SYNERGY_ENABLED",
     # SNI Enhanced — operator spec flag name, verbatim
     "SNIEnhanced": "SNI_ENHANCED_ENABLED",
+    # Merged modules — operator spec flag names, verbatim (default false)
+    "TrafficShaping": "TRAFFIC_SHAPING_MERGED",
+    "Transport": "TRANSPORT_MERGED",
+    "Learning": "LEARNING_MERGED",
+    "Payload": "PAYLOAD_MERGED",
 }
 
 DEFAULT_SNI_POOL = "cdnjs.cloudflare.com,www.hcaptcha.com,auth.vercel.com,www.google.com"
@@ -328,6 +354,11 @@ def core_host_module() -> str:
         var = ENGINE_FLAG_VARS.get(name, f"EMUNEL_ENGINE_{name.upper()}_ENABLED")
         if _bool(var, False):
             return "engines.core_host"
+    # STABILIZATION: the merged Transport module runs core-side children
+    # (PreConnect/FEC/Congestion) inside instances — its flag implies the
+    # engines host exactly like the individual engine flags do
+    if _bool("TRANSPORT_MERGED", False):
+        return "engines.core_host"
     return ""
 
 
@@ -361,6 +392,22 @@ def parse_env(host: str = "console") -> EngineEnv:
         reality_on=_bool("EMUNEL_ENGINE_REALITY_ENABLED", True),
 
         snienhanced_on=_bool("SNI_ENHANCED_ENABLED", False),
+        # merged modules (STABILIZATION — spec flag names, default false)
+        traffic_shaping_merged=_bool("TRAFFIC_SHAPING_MERGED", False),
+        transport_merged=_bool("TRANSPORT_MERGED", False),
+        learning_merged=_bool("LEARNING_MERGED", False),
+        payload_merged=_bool("PAYLOAD_MERGED", False),
+        legacy_engines_enabled=_bool("LEGACY_ENGINES_ENABLED", True),
+        ts_cache_ttl=max(5.0, _float("EMUNEL_TS_CACHE_TTL", 300.0)),
+        ts_cache_max=max(4, _int("EMUNEL_TS_CACHE_MAX", 100)),
+        engines_status_ttl=max(0.0, _float("EMUNEL_ENGINES_STATUS_TTL", 5.0)),
+        mesh_policy_ttl=max(0.0, _float("EMUNEL_MESH_POLICY_TTL", 60.0)),
+        soft_mem_mb=max(64.0, _float("EMUNEL_SOFT_MEM_MB", 380.0)),
+        hard_mem_mb=max(96.0, _float("EMUNEL_HARD_MEM_MB", 460.0)),
+        mem_check_sec=max(5.0, _float("EMUNEL_MEM_CHECK_SEC", 30.0)),
+        backup_interval_h=max(0.25, _float("EMUNEL_BACKUP_INTERVAL_H", 6.0)),
+        backup_keep=max(1, _int("EMUNEL_BACKUP_KEEP", 7)),
+        backup_max_mb=max(1.0, _float("EMUNEL_BACKUP_MAX_MB", 64.0)),
         snienhanced_method=(_str("SNI_ENHANCED_METHOD", "combined").strip().lower() or "combined"),
         snienhanced_fooling=(_str("SNI_ENHANCED_FOOLING", "md5sig").strip().lower() or "md5sig"),
         snienhanced_seqovl=max(0, _int("SNI_ENHANCED_MULTISPLIT_SEQOVL", 568)),

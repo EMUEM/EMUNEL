@@ -111,6 +111,11 @@ def _maybe_enable_core_host(cfg) -> None:
         key = f"{name.lower()}_on"
         if name in (cfg.pipeline_order or []) and getattr(cfg, key, False):
             any_core_engine = True
+    # STABILIZATION: the merged Transport module runs core-side children
+    # (PreConnect/FEC/Congestion) inside instances — enabling it implies the
+    # engines host, exactly like enabling the individual engines
+    if getattr(cfg, "transport_merged", False):
+        any_core_engine = True
     if not any_core_engine:
         return
     root = os.environ.get("EMUNEL_ENGINES_ROOT") or _repo_root()

@@ -268,6 +268,10 @@ function poll(ms,fn){
   }
   run();
   return {stop:function(){stop=true;if(t)clearTimeout(t)}}}
+// STABILIZATION (stage 4.3): polls still fetch every cycle, but the DOM is
+// re-rendered ONLY when the payload actually changed (render-skip)
+var _snaps={};
+function snapChanged(key,val){var s=JSON.stringify(val);if(_snaps[key]===s)return false;_snaps[key]=s;return true}
 // Visible connection state: network-level fetch failures surface ONE toast
 // per 30s instead of silently breaking the page ("random disconnects").
 var _netErrAt=0;
@@ -352,6 +356,7 @@ function viewDash(){
   function load(){
     return Promise.all([api("GET","/api/instances"),api("GET","/api/activity")]).then(function(rs){
       var list=rs[0].instances, act=rs[1].activity;
+      if(!snapChanged("dash",{l:list,a:act}))return list;   // render-skip
       var run=0,sto=0,fail=0;list.forEach(function(i){if(i.status==="running")run++;else if(i.status==="failed")fail++;else sto++});
       $("#sgs").innerHTML=sg("Active instances",list.length)+sg("Running",run,"var(--grn)")+sg("Stopped",sto)+sg("Failed",fail,fail?"var(--red)":null);
       var il=$("#il");
@@ -371,7 +376,7 @@ function viewDash(){
       '<div class="mt"><span>'+esc(i.region)+"</span>"+(i.volume_limit_bytes?'<span class="chip">'+fmtBytes(i.volume_limit_bytes)+"</span>":"")+(i.volume_expires_at?'<span class="chip">'+(Math.ceil((new Date(i.volume_expires_at)-Date.now())/864e5)||1)+"d left</span>":"")+"<span>"+i.deployments_count+' deploys</span><span>created '+ago(i.created_at)+"</span></div></div>";
   }
   load().then(function(list){
-    pollTimer=poll(6000,function(){
+    pollTimer=poll(10000,function(){
       if(list.some(function(i){return BUSY[i.status]}))return load();
     });
   });
@@ -484,7 +489,7 @@ function viewInst(id){
     Array.prototype.forEach.call(v.querySelectorAll(".tab"),function(b){b.onclick=function(){tab=b.dataset.t;head();draw()}});
   }
   function act(k){api("POST","/api/instances/"+id+"/"+k).then(function(){toast({restart:"Restarting…",stop:"Stopping…",redeploy:"Redeploying…"}[k],"ok");refresh()}).catch(function(e){toast(e.message,"err")})}
-  function refresh(){return api("GET","/api/instances/"+id).then(function(d){inst=d;head();draw()})}
+  function refresh(){return api("GET","/api/instances/"+id).then(function(d){if(!snapChanged("inst-"+id,d))return;inst=d;head();draw()})}
   function draw(){
     var b=$("#tb");if(!b)return;
     if(tab==="config"){
@@ -764,7 +769,7 @@ function viewInst(id){
     .catch(function(){});
   }
   refresh().then(function(){
-    pollTimer=poll(5000,function(){
+    pollTimer=poll(10000,function(){
       if(tab==="logs")return pollLogs();
       else if(BUSY[inst.status]||tab==="overview")return refresh();
     });

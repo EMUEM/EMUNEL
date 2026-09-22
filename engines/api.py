@@ -41,6 +41,7 @@ import time
 from fastapi import APIRouter, Request
 
 from .base import KIND_CONFIGGEN, KIND_FRAMES
+from .api_cache import ttl_cache_clear, ttl_cache_get, ttl_cache_put
 
 _cache: dict = {"at": 0.0, "cores": []}
 _skip_until: dict[str, float] = {}   # instance_id -> monotonic ts to re-probe
@@ -123,9 +124,21 @@ def build_router(manager) -> APIRouter:
     @router.get("/")
     async def engines_status(request: Request, _=None):
         await _admin(request)
+        # STABILIZATION stage 4.2: TTL response cache (spec: 5s). The
+        # panel polls this endpoint; the payload rebuild (engine iteration
+        # + worker fan-out) now happens at most once per TTL window. Any
+        # hot-toggle clears the cache instantly (set_engine_enabled hook).
+        ttl = max(0.0, getattr(manager.cfg, "engines_status_ttl", 5.0))
+        key = "engines-status"
+        if ttl > 0:
+            hit = ttl_cache_get(key, ttl)
+            if hit is not None:
+                return hit
         payload = manager.status()
         payload["cores"] = await _core_engine_status(request)
-        payload["api"] = {"version": 1}
+        payload["api"] = {"version": 1, "cached": ttl > 0}
+        if ttl > 0:
+            ttl_cache_put(key, payload)
         return payload
 
     # ---- SNI Spoofing (bypass profile generator + client helper) ------------

@@ -258,6 +258,12 @@ class ProcessDriver(BaseDriver):
         "Compress": "EMUNEL_ENGINE_COMPRESS_ENABLED",
         "FEC": "EMUNEL_ENGINE_FEC_ENABLED",
     }
+    # STABILIZATION: merged-module flags that run core-side children — when
+    # any is on, the Core launches through the engines host and its own
+    # manager activates the merged module (flag propagates via env verbatim)
+    MERGED_CORE_FLAGS = {
+        "Transport": "TRANSPORT_MERGED",
+    }
 
     def __init__(self, ports: PortAllocator, data_root: Path, core_cmd: list[str] | None = None):
         super().__init__(ports, data_root)
@@ -340,6 +346,15 @@ class ProcessDriver(BaseDriver):
                 extra[flag] = "1"
             elif name in toggles:           # explicitly hot-disabled by operator
                 extra[flag] = "0"
+        # merged Transport module (STABILIZATION): TRANSPORT_MERGED=true in
+        # this worker's env (set by the console pre-check) launches Cores
+        # through the engines host with the module flag passed verbatim
+        for name, flag in self.MERGED_CORE_FLAGS.items():
+            if os.environ.get(flag, "").strip().lower() in ("1", "true", "yes", "on"):
+                want_host = True
+            elif toggles.get(name, False):
+                want_host = True
+                extra[flag] = "1"
         if not want_host:
             return "emunel_core", {}
         return "engines.core_host", extra

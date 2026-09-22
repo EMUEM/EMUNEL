@@ -241,3 +241,11 @@ Engine flags (all default `false`, verbatim from the operator spec):
 `CHAOS_PROTOCOL_ENABLED`, `DPI_MESH_ENABLED`, `GENETIC_ENGINE_ENABLED`,
 `SYNERGY_ENABLED` — plus `CHAOS_SECRET` and `MESH_SALT` secrets. See
 `.env.example` and `engines/README.md` for the full tunable list.
+
+## STABILIZATION additions (v1.4.0)
+
+No new routes — existing ones gained caching + a report block:
+
+- `GET /api/engines` — response cached TTL 5s (`EMUNEL_ENGINES_STATUS_TTL`, 0=off); the payload now carries `stabilization` (memory-guard stats, backup stats, merged flags, legacy toggle) and per-engine `inside: <Module>` + `group: {...}` annotations when a merged module owns the engine. Hot-toggles clear the cache instantly.
+- `GET /api/mesh/policy` — cached TTL 60s (`EMUNEL_MESH_POLICY_TTL`).
+- Merged engines appear by name (`TrafficShaping`, `Transport`, `Learning`, `Payload`) and hot-toggle like any engine; toggling a child routes into its module.

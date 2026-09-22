@@ -21,10 +21,20 @@ auto-detected; no start command or variables are required.
 Attach a volume:
 
 - **Settings → Volumes → New Volume** → mount path **`/data`**
+- **Settings → Variables → add `RAILWAY_RUN_UID=0`** — Railway volumes are
+  root-owned; this variable makes Railway run the container as root so the
+  app can write the volume (without it the container runs as the
+  unprivileged `emunel` user and writes to `/data` fail)
 
 Everything the platform persists lives under `/data` (or `.emunel-data/`
 next to the app when `/data` is absent): the SQLite database, the session
 secret, and every instance's state (links, quotas, traffic counters).
+
+With a volume attached, the engines layer ALSO runs automatic rotating
+backups (STABILIZATION): every 6h a consistent copy of the engine state,
+the engine DBs and the console DB lands in `/data/engines/backups/`, 7
+copies kept (`EMUNEL_BACKUP_*` to tune). SQLite databases run in WAL mode
+for crash safety.
 
 > Without a volume the panel still boots and works, but data resets on
 > each deploy — the instance endpoint page will tell users to copy fresh

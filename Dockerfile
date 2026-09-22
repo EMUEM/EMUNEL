@@ -52,6 +52,9 @@ RUN if [ -n "$XRAY_VERSION" ]; then \
     fi
 
 # ── runtime user + writable data dir (persistent volume mount point) ─────────
+# MALLOC_ARENA_MAX=2: stops glibc from multiplying 64MB arenas per thread —
+# a real RSS reducer for the threaded Python runtime (STABILIZATION stage 3).
+ENV MALLOC_ARENA_MAX=2
 RUN useradd --uid 65532 --shell /usr/sbin/nologin emunel \
  && mkdir -p /data /data/instances \
  && chown -R emunel:emunel /data /app

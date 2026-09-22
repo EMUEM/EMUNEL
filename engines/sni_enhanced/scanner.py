@@ -74,6 +74,15 @@ async def probe_target(host: str, port: int, *, sni: str = "",
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=timeout)
+        # STABILIZATION (spec 6.3): probe sockets run with TCP_NODELAY so
+        # latency numbers are real (no Nagle delay mixed in)
+        try:
+            sock = writer.transport.get_extra_info("socket")
+            if sock is not None:
+                import socket as _socket
+                sock.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
+        except (OSError, AttributeError):
+            pass
     except (asyncio.TimeoutError, OSError) as exc:
         result["error"] = type(exc).__name__ if isinstance(exc, OSError) else "timeout"
         return result

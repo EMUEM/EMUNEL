@@ -72,6 +72,11 @@ default "baseline" profile is a byte-exact passthrough.
 | **Reality** | on | console | X25519 keypairs, VLESS+REALITY inbound/outbound config generation (RAW/XHTTP/gRPC) and vless:// share links + a real reachability probe per generated endpoint; optional pinned-Xray runtime — env pin (`EMUNEL_XRAY_BINARY`+`EMUNEL_XRAY_SHA256`) or baked into the image (`XRAY_VERSION` build variable, digest-verified at build). |
 | **SNIEnhanced** | off | console | stateful DPI evasion control plane (see `engines/sni_enhanced/`): 15 techniques, ISP strategies, weighted allowed-SNI pool, CDN/decoy scanner, per-technique success rates, enhanced client helper with the 4-step fallback ladder. |
 
+| **TrafficShaping** | off | console+core | merged Group A (STABILIZATION): Morph + SNIEnhanced + Chaos in ONE module behind `TRAFFIC_SHAPING_MERGED` — shared decision cache (TTL 300s / 100 entries), shared SQLite journal, configgen response cache for repeat subscription bodies. Children stay addressable by name (API compatibility). |
+| **Transport** | off | console+core | merged Group B behind `TRANSPORT_MERGED`: Pre-Connect (ALWAYS on in the module, warm pool now actually FILLED by the dial hook with speculative background dials + TCP_NODELAY), Congestion (adaptive socket tuning), FEC (adaptive ratio `min(0.3, max(0.05, loss*3))`, honest TCP-dormant), SessionResumption. Core-side children imply the engines host for instances. |
+| **Learning** | off | console | merged Group C behind `LEARNING_MERGED`: Mesh + Genetic + Synergy on ONE shared SQLite (consolidated.db — mesh.db/genetic.db are never created) and ONE 10-minute cadence (mesh aggregation + synergy loop 5min→10min, genetic keeps 6h; the facade adds a single 10-min cron for WAL checkpoint + cache trims). |
+| **Payload** | off | console+core | merged Group D behind `PAYLOAD_MERGED`: Coalesce (16KB per-stream buffer cap) + Compress (level 4; set `EMUNEL_HTTP_COMPRESS_MIN_BYTES=1024` for the spec's >1KB rule on the HTTP hop). |
+
 Every inactive engine shows WHY in the panel (Engine Settings → reason line).
 
 ## Operator CLI

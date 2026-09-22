@@ -30,10 +30,14 @@ content-type filtering plus a hard path skip for /i/ guarantee it.
 """
 from __future__ import annotations
 
+import os
 import threading
 import zlib
 
-MIN_SIZE = 256
+# STABILIZATION (spec 3.2): only bodies worth compressing — 256B default
+# (unchanged behaviour); operators running the merged Payload module set
+# EMUNEL_HTTP_COMPRESS_MIN_BYTES=1024 for the spec's >1KB rule
+MIN_SIZE = max(0, int(os.environ.get("EMUNEL_HTTP_COMPRESS_MIN_BYTES", "256")))
 
 COMPRESSIBLE = (
     "text/", "application/json", "application/javascript",
