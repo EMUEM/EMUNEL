@@ -264,6 +264,25 @@ all endpoint tokens vanish → every client with a saved config hammers the
 domain with 404s. The panel now survives this gracefully; making it stop
 entirely requires the **Volume at `/data`** (see RAILWAY.md).
 
+## Storage self-check (every deploy)
+
+`main.py` prints one loud line at boot so a missing or mis-mounted volume
+is visible in the deploy logs immediately — the exact failure that wiped
+the DB and triggered the storm above. Detection uses Railway's
+auto-injected `RAILWAY_VOLUME_MOUNT_PATH` (present whenever a volume is
+attached) plus a POSIX mountpoint check on `/data`; the check never raises
+and never blocks boot. Log signatures:
+
+```
+[emunel] storage : volume attached at /data — state persists across redeploys
+[emunel] storage : WARNING — no volume at /data; … railway volume add -m /data …
+[emunel] storage : WARNING — volume mounted at /app/data but EMUNEL writes state under /data; …
+```
+
+Note: volumes cannot be declared in `railway.json` (Railway's config-as-code
+schema has no volume field) — attach once via CLI/UI and every subsequent
+deploy re-mounts it automatically.
+
 ## New knobs
 
 `EMUNEL_WS_MAX_CONNECTIONS` (60) · `EMUNEL_WS_MAX_FRAME_BYTES` (4 MiB) ·

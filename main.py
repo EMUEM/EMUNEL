@@ -58,6 +58,40 @@ def _writable_dir(candidates: list[Path | None]) -> Path | None:
     return None
 
 
+def _announce_storage() -> None:
+    """One loud boot line about WHERE persistent state lives.
+
+    Railway re-mounts an attached volume at container start on EVERY deploy,
+    so attaching once is enough — but a missing (or mis-mounted) volume was
+    the root trigger of the v1.4.1 reconnect storm: the ephemeral filesystem
+    wiped the database on redeploy, every endpoint token died, and clients
+    hammered the gateway. This check makes the storage state visible in the
+    deploy logs immediately instead of surfacing hours later. Never raises.
+    """
+    expected = "/data"
+    try:
+        env_mount = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+        name = os.environ.get("RAILWAY_VOLUME_NAME", "").strip()
+        mounted = os.path.ismount(expected)
+        if env_mount == expected or (mounted and not env_mount):
+            label = f" ({name})" if name else ""
+            print(f"[emunel] storage : volume attached at {expected}{label} — "
+                  "state persists across redeploys", file=sys.stderr)
+        elif env_mount:
+            print(f"[emunel] storage : WARNING — volume mounted at {env_mount} "
+                  f"but EMUNEL writes state under {expected}; re-mount the "
+                  f"volume at {expected} (service → Volumes) or data will be "
+                  "lost on every redeploy", file=sys.stderr)
+        else:
+            print(f"[emunel] storage : WARNING — no volume at {expected}; state "
+                  "lives on the container's EPHEMERAL filesystem — on Railway "
+                  "every redeploy wipes it. Attach once: `railway volume add -m "
+                  f"{expected}` + set RAILWAY_RUN_UID=0 (local dev: safe to "
+                  "ignore)", file=sys.stderr)
+    except Exception as exc:  # absolute fallback: logging must never crash boot
+        print(f"[emunel] storage : status check skipped ({exc})", file=sys.stderr)
+
+
 def ensure_secret_key() -> str:
     """Return a usable session secret, persisting a generated one if needed."""
     val = os.environ.get("EMUNEL_SECRET_KEY", "").strip()
@@ -183,6 +217,9 @@ def setup() -> None:
     os.environ.setdefault("EMUNEL_PUBLIC_URL", f"http://127.0.0.1:{port}")
     os.environ.setdefault("EMUNEL_NODE_ID", "local")
     os.environ.setdefault("EMUNEL_NODE_REGION", "local")
+
+    # Storage self-check: loud one-liner on every deploy (see _announce_storage)
+    _announce_storage()
 
     data_root = _writable_dir([
         Path(os.environ["EMUNEL_WORKER_DATA"]) if os.environ.get("EMUNEL_WORKER_DATA") else None,

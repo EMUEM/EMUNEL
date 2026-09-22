@@ -18,13 +18,39 @@ auto-detected; no start command or variables are required.
 
 ## Persistence (required for instances to survive redeploys)
 
-Attach a volume:
+Attach a volume **once** — Railway re-mounts it at container start on
+**every deploy automatically**, so nothing needs re-attaching per deploy.
+The attachment lives in the Railway project, not in the repo: the
+`railway.json` config-as-code schema has no volume field (verified against
+Railway's published schema), which is why this is a one-time platform
+action instead of repo config.
 
-- **Settings → Volumes → New Volume** → mount path **`/data`**
-- **Settings → Variables → add `RAILWAY_RUN_UID=0`** — Railway volumes are
-  root-owned; this variable makes Railway run the container as root so the
-  app can write the volume (without it the container runs as the
-  unprivileged `emunel` user and writes to `/data` fail)
+**CLI (exact commands):**
+
+```bash
+npm i -g @railway/cli
+railway login                            # one time (browser)
+railway link                             # pick the EMUNEL project + service
+railway volume add -m /data              # create + attach the volume
+railway variable set "RAILWAY_RUN_UID=0" # root so /data is writable
+railway volume list                      # verify: one volume at /data
+```
+
+**UI alternative:** command palette (Ctrl/Cmd+K) → *Volume* → select the
+EMUNEL service → mount path **`/data`**; then Settings → Variables → add
+`RAILWAY_RUN_UID=0` — Railway volumes are root-owned; this variable makes
+Railway run the container as root so the app can write the volume (without
+it the container runs as the unprivileged `emunel` user and writes to
+`/data` fail).
+
+**Every deploy self-verifies this in the boot logs** (near the first lines
+of the deployment log — the exact signatures to grep for):
+
+```
+[emunel] storage : volume attached at /data — state persists across redeploys        ← OK
+[emunel] storage : WARNING — no volume at /data; … railway volume add -m /data …      ← attach it (commands above)
+[emunel] storage : WARNING — volume mounted at /app/data but EMUNEL writes …        ← re-mount at /data
+```
 
 Everything the platform persists lives under `/data` (or `.emunel-data/`
 next to the app when `/data` is absent): the SQLite database, the session
