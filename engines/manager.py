@@ -14,6 +14,7 @@ One manager instance per process (console host / core host). It:
 from __future__ import annotations
 
 import asyncio
+import gc
 import time
 from typing import Callable
 
@@ -168,9 +169,56 @@ class EngineManager:
 
             self.mem_guard = MemoryGuard(
                 soft_mb=self.cfg.soft_mem_mb, hard_mb=self.cfg.hard_mem_mb,
-                check_sec=self.cfg.mem_check_sec, bus=self.bus)
+                check_sec=self.cfg.mem_check_sec, bus=self.bus,
+                emergency_after=self.cfg.mem_emergency_stops)
             self.mem_guard.on_trim(_trim_all_caches)
             self.mem_guard.on_degrade(_drain_all_pools)
+
+            def _emergency_shed_engines():
+                # TASK 4 (engine/UI separation, process-level form): when RSS
+                # stays above the hard ceiling the engines layer sheds ITSELF
+                # so the panel (UI + API) keeps serving. Cores already run as
+                # separate processes; these console-host engines are the only
+                # engine code sharing the panel's process. The operator
+                # restarts engines from Engine Settings after fixing the
+                # pressure (set_engine_enabled -> _activate(force=True)).
+                async def _stop_all():
+                    stopped = []
+                    for name, engine in list(self.engines.items()):
+                        if not engine.status.active:
+                            continue
+                        try:
+                            await engine.stop()
+                        except Exception as exc:  # stopping must never raise
+                            engine.log.error(f"emergency stop failed: {exc}")
+                        engine.status.active = False
+                        engine.status.reason = ("memory guard emergency stop — "
+                                               "re-enable from Engine Settings")
+                        stopped.append(name)
+                    self._build_pipelines()   # empty pipelines = raw passthrough
+                    if stopped:
+                        self.state.append_log("system",
+                            f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [WARN] memory guard: "
+                            f"emergency engine stop ({', '.join(stopped)}) — "
+                            "panel kept alive; re-enable from Engine Settings")
+                        self.bus.publish("engine.lifecycle", {
+                            "action": "emergency-stop", "names": stopped})
+                    print(f"[emunel-engines] memory guard: emergency engine "
+                          f"stop ({len(stopped)} engines) — panel kept alive",
+                          flush=True)
+                try:
+                    task = asyncio.create_task(_stop_all())
+                    self._tasks.append(task)   # keep a reference
+                except RuntimeError:
+                    pass   # no running loop (test context): skip
+                gc.collect()
+
+            self.mem_guard.on_emergency(_emergency_shed_engines)
+            try:
+                from .middleware import ws_active_count as _ws_count
+                self.mem_guard.on_stat(lambda: {"ws_conns": _ws_count()})
+            except Exception:
+                pass
             await self.mem_guard.start()
         except Exception as exc:  # the guard itself must never break boot
             print(f"[emunel-engines] WARNING: memory guard not started: {exc}",

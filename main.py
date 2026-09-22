@@ -270,11 +270,17 @@ def main() -> int:
     port = int(os.environ.get("PORT", os.environ.get("EMUNEL_CONSOLE_PORT", "8080")))
     import uvicorn
 
+    # Global in-flight request ceiling (storm guard): above it uvicorn
+    # answers 503 immediately instead of queueing handlers that pile up
+    # memory. Default 512 is far above legitimate trial-plan traffic and
+    # far below fd exhaustion. 0 disables the cap.
+    _limit = int(os.environ.get("EMUNEL_LIMIT_CONCURRENCY", "512") or 0)
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=port,
         log_level=os.environ.get("EMUNEL_LOG_LEVEL", "info"),
+        limit_concurrency=_limit if _limit > 0 else None,
     )
     _stop_worker()
     return 0

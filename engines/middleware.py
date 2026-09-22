@@ -35,6 +35,15 @@ from .config import EngineEnv
 WS_DATA = "websocket.send"
 SUB_PREFIX = "/i/"
 
+# live count of gateway WebSocket connections flowing through this layer
+# (task 5: feeds the 30s memory-monitor log line; a reconnect storm is
+# visible as ws_conns climbing while nothing is actually relayed)
+_ws_active = 0
+
+
+def ws_active_count() -> int:
+    return _ws_active
+
 
 class EnginesASGIMiddleware:
     """Pure ASGI middleware; app on the inside, engines on the outside."""
@@ -46,13 +55,21 @@ class EnginesASGIMiddleware:
         self.panel_page = panel_page or ""
 
     async def __call__(self, scope, receive, send):
+        global _ws_active
         if scope["type"] == "websocket":
-            if scope.get("path", "").startswith(SUB_PREFIX) \
-                    and self.manager.pipelines.get(KIND_FRAMES):
-                await self._websocket(scope, receive, send)
+            counted = scope.get("path", "").startswith(SUB_PREFIX)
+            if counted:
+                _ws_active += 1
+            try:
+                if counted \
+                        and self.manager.pipelines.get(KIND_FRAMES):
+                    await self._websocket(scope, receive, send)
+                    return
+                await self.app(scope, receive, send)
                 return
-            await self.app(scope, receive, send)
-            return
+            finally:
+                if counted:
+                    _ws_active -= 1
         if scope["type"] == "http":
             if scope.get("path", "").startswith(SUB_PREFIX):
                 await self._http_gateway(scope, receive, send)
@@ -156,10 +173,22 @@ class _WSConnection:
         if self._closed or not data:
             return
         hard_cap = self.cfg.coalesce_max_buffer
-        # backpressure: never let the buffer run away on a stalled client
+        # backpressure: never let the buffer run away on a stalled client.
+        # BOUNDED wait (task 6): a flush stuck longer than the timeout means
+        # the client is gone — we drop the connection instead of pinning
+        # the coroutine (and its buffers) forever.
+        deadline = time.monotonic() + self.cfg.backpressure_timeout_s
         while self.pending >= hard_cap and self._flushing and not self._closed:
+            if time.monotonic() >= deadline:
+                self._closed = True
+                raise ConnectionError("ws backpressure timeout (stalled client)")
             self._data_event.clear()
-            await self._data_event.wait()
+            try:
+                await asyncio.wait_for(
+                    self._data_event.wait(),
+                    timeout=min(1.0, max(0.01, deadline - time.monotonic())))
+            except asyncio.TimeoutError:
+                pass
         if self._closed:
             return
         self.buffer.append((data, is_text))
@@ -296,6 +325,12 @@ class _WSConnection:
     async def close(self) -> None:
         await self.flush(final=True)
         await self._stop_flusher()
+        # a connection that relayed ZERO frames in both directions is storm
+        # churn (rejected/never-relayed), not a Morph sample — sending it
+        # would only burn CPU and pollute the bandit with noise per
+        # reconnect attempt.
+        if self.up_bytes == 0 and self.down_bytes == 0:
+            return
         duration = time.monotonic() - self.opened
         payload = {
             "engine": "Morph",

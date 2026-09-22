@@ -52,6 +52,98 @@ def _page(title: str, body: str, status: int = 200) -> "HTMLResponse":
     return HTMLResponse(FRIENDLY_404.format(title=title, body=body), status_code=status)
 
 
+# ── storm hardening (reconnect-loop / OOM fix) ──────────────────────────────
+# Task 1/2/3 of the gateway stabilization: proxy clients that get a 404
+# (or a bare close) reconnect IMMEDIATELY with no backoff. Three levers:
+#   * stopped instances answer 503 + Retry-After ("come back later")
+#   * non-browser clients get a ~30-byte body instead of the friendly
+#     HTML page (thousands of storm hits stopped paying for kilobytes)
+#   * WebSocket relays are capped (1013 = try-again-later), their tasks
+#     are awaited on teardown, and upstream sockets carry write timeouts
+import os as _os_env
+
+_WS_MAX_CONNECTIONS = max(0, int(_os_env.environ.get("EMUNEL_WS_MAX_CONNECTIONS", "60")))
+_WS_MAX_FRAME_BYTES = int(_os_env.environ.get("EMUNEL_WS_MAX_FRAME_BYTES", str(4 * 1024 * 1024)))
+_WS_WRITE_TIMEOUT = float(_os_env.environ.get("EMUNEL_WS_WRITE_TIMEOUT", "10"))
+
+
+def _is_browser_request(request) -> bool:
+    """Browsers always send a Mozilla UA *and* Accept: text/html; proxy
+    clients never do (same heuristic as the subscription handler)."""
+    ua = (request.headers.get("user-agent") or "").lower()
+    accept = (request.headers.get("accept") or "").lower()
+    return "mozilla" in ua and "text/html" in accept
+
+
+def _tiny(status: int, text: str, retry_after: int | None = None):
+    """Minimal plain-text reply for non-browser (proxy-client) traffic."""
+    from fastapi.responses import Response as _R
+
+    headers = {"Cache-Control": "no-store"}
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+    return _R(content=f"emunel: {text}\n", status_code=status,
+              media_type="text/plain", headers=headers)
+
+
+class _WsGuard:
+    """Cap + counter for live gateway WebSocket relays (task 3).
+
+    Server-side truth for monitoring; the 30s memory monitor line reads
+    `.active` so the reconnect storm is visible in the Railway logs."""
+
+    def __init__(self, cap: int):
+        self.cap = cap
+        self.active = 0
+        self.rejected = 0
+
+    def acquire(self) -> bool:
+        if 0 < self.cap <= self.active:
+            self.rejected += 1
+            return False
+        self.active += 1
+        return True
+
+    def release(self) -> None:
+        self.active = max(0, self.active - 1)
+
+
+_ws_guard = _WsGuard(_WS_MAX_CONNECTIONS)
+
+
+async def _bounded_send(aw) -> None:
+    """Every relay send carries a timeout (websockets 16 has no
+    write_timeout kwarg): a peer that stops reading is cut when its
+    send buffer stalls, instead of pinning the relay task forever."""
+    await asyncio.wait_for(aw, timeout=_WS_WRITE_TIMEOUT)
+
+
+def ws_active_count() -> int:
+    """Live WS relay count for the engines memory-monitor line (task 5)."""
+    return _ws_guard.active
+
+
+def _stream_upstream(upstream_resp):
+    """aiter_raw wrapped so the upstream response is ALWAYS aclose()'d.
+
+    Starlette skips BackgroundTask cleanup when the client disconnects
+    mid-stream (the response coroutine is cancelled); a leaked response
+    keeps its pool connection checked out forever and the shared client
+    eventually deadlocks (max_connections reached, pool timeout=None).
+    The generator's finally runs on both the normal and the cancelled
+    path (asyncgen shutdown hooks), which releases the connection."""
+    async def _gen():
+        try:
+            async for chunk in upstream_resp.aiter_raw():
+                yield chunk
+        finally:
+            try:
+                await upstream_resp.aclose()
+            except Exception:
+                pass
+    return _gen()
+
+
 def _singbox_outbound(url: str) -> dict:
     """vless:// / trojan:// URI -> sing-box outbound. Shadowsocks links pass
     through parsed minimally; unsupported schemes are skipped by caller."""
@@ -281,10 +373,19 @@ async def _resolve_endpoint(request: Request, token: str) -> dict | None:
         )
     if row is not None and row["endpoint_token"] is None:
         row = None
-    if row is None or row["status"] != "running":
+    if row is None:
         log.debug("endpoint resolve miss (token[:10]=%s)", token[:10])
         _cache_put(token, None)
         return None
+    if row["status"] != "running":
+        # KNOWN instance that is not running (restarting / crashed / OOM):
+        # a TEMPORARY state, not a dead endpoint. Cached on the short
+        # negative TTL like a miss, but carried so callers can answer
+        # 503 + Retry-After instead of a 404 — a 404 tells xHTTP clients
+        # the endpoint is gone forever and they reconnect in a tight
+        # loop (the Railway log storm).
+        _cache_put(token, {"stopped": True})
+        return {"stopped": True}
     from ..services.workers import worker_url_for
 
     target = {
@@ -331,6 +432,14 @@ async def instance_status_page(token: str, request: Request):
             "from the <b>Config</b> tab.",
             status=404,
         )
+    if target.get("stopped"):
+        return _page(
+            "Instance restarting",
+            "The instance behind this endpoint is starting or restarting. "
+            "Proxy clients should retry shortly — this is temporary, the "
+            "endpoint is still valid.",
+            status=503,
+        )
     return _page(
         "This endpoint is live",
         "This address is the private transport path for your proxy client — "
@@ -351,8 +460,10 @@ async def instance_qr_public(token: str, request: Request):
     from fastapi.responses import Response as _Response
 
     target = await _resolve_endpoint(request, token)
-    if target is None:
-        raise HTTPException(status_code=404, detail="unknown endpoint")
+    if target is None or target.get("stopped"):
+        raise HTTPException(status_code=404 if target is None else 503,
+                             detail="unknown endpoint" if target is None
+                             else "instance not running")
     body = await request.json()
     text = str(body.get("text") or "")[:4096]
     if not text:
@@ -526,13 +637,30 @@ async def instance_subscription(token: str, request: Request):
 async def instance_http_gateway(token: str, path: str, request: Request):
     target = await _resolve_endpoint(request, token)
     if target is None:
-        return _page(
-            "Endpoint not found",
-            "This endpoint doesn't exist or its instance is not running. "
-            "Check the panel — if the instance is Running, copy the fresh "
-            "config from its <b>Config</b> tab.",
-            status=404,
-        )
+        # Unknown/deleted endpoint. Browsers get the friendly page; proxy
+        # clients get ~30 bytes — a 404-storm must not pay for kilobytes.
+        if _is_browser_request(request):
+            return _page(
+                "Endpoint not found",
+                "This endpoint doesn't exist or its instance is not running. "
+                "Check the panel — if the instance is Running, copy the fresh "
+                "config from its <b>Config</b> tab.",
+                status=404,
+            )
+        return _tiny(404, "endpoint not found")
+    if target.get("stopped"):
+        # Instance EXISTS but is not running (restart / crash / OOM):
+        # 503 + Retry-After is the correct signal — 404 made xHTTP clients
+        # treat the endpoint as permanently gone and reconnect in a
+        # tight loop (the endless stream-up 404 spam in the logs).
+        if _is_browser_request(request):
+            return _page(
+                "Instance restarting",
+                "The instance behind this endpoint is starting or restarting. "
+                "Proxy clients should retry shortly.",
+                status=503,
+            )
+        return _tiny(503, "instance not running", retry_after=5)
 
     worker_url = target["worker_url"].rstrip("/")
     url = f"{worker_url}{target['upstream']}/{path}"
@@ -555,7 +683,10 @@ async def instance_http_gateway(token: str, path: str, request: Request):
         )
         upstream_resp = await client.send(upstream_req, stream=True)
         return StreamingResponse(
-            upstream_resp.aiter_raw(),
+            # wrapped stream: the response is closed even when the client
+            # disconnects mid-stream (BackgroundTask alone does NOT run on
+            # that path — the leaked connection would deadlock the pool)
+            _stream_upstream(upstream_resp),
             status_code=upstream_resp.status_code,
             headers={k: v for k, v in upstream_resp.headers.items()
                      if k.lower() not in HOP_BY_HOP},
@@ -584,87 +715,113 @@ async def instance_ws_gateway(ws: WebSocket, token: str, path: str):
     Accept the client up front (so failures produce proper close codes, not
     Starlette's HTTP 403 rejection), then open the upstream through the
     worker's ws-proxy and pump frames in both directions.
+
+    Storm hardening: connections are capped (task 3 — over-cap clients get
+    1013 try-again-later), a stopped instance closes with 1013 (retry) while
+    a dead endpoint stays 1008 (do not retry), the relay tasks are always
+    awaited on teardown so nothing is left half-open, and the upstream
+    socket carries frame/write bounds (task 6) so a stalled hop cannot
+    pin buffers or tasks forever.
     """
     await ws.accept()
-    try:
-        target = await _resolve_endpoint(ws, token)
-    except Exception as _exc:
-        import traceback as _tb
-
-        log.error("WS resolve failed: %s | %s", _exc, _tb.format_exc()[-400:])
-        target = None
-    if target is None:
-        await ws.close(code=1008, reason="unknown or inactive instance endpoint")
-        return
-
-    # Build the upstream ws URL through the worker's websocket proxy
-    # (separate route from the HTTP /proxy path).
-    worker_ws = target["worker_url"].replace("http://", "ws://").replace("https://", "wss://").rstrip("/")
-    from ..config import settings as _settings
-
-    upstream_url = (
-        f"{worker_ws}/worker/api/instances/{target['instance_id']}/ws-proxy/{path}"
-        f"?token={_settings.worker_token}"
-    )
-
-    # Forward selected client headers so Core sees the real client IP etc.
-    client_headers = {}
-    for key in ("x-forwarded-for", "x-real-ip", "user-agent"):
-        val = ws.headers.get(key)
-        if val:
-            client_headers[key] = val
-    client_headers["x-emunel-endpoint"] = token
-
-    try:
-        async with websockets.connect(
-            upstream_url,
-            additional_headers=client_headers,  # type: ignore[arg-type]
-            max_size=None,
-            ping_interval=20,
-            ping_timeout=20,
-            close_timeout=5,
-        ) as upstream:
-            async def client_to_upstream() -> None:
-                try:
-                    while True:
-                        msg = await ws.receive()
-                        if msg["type"] == "websocket.disconnect":
-                            return
-                        data = msg.get("bytes")
-                        if data is not None:
-                            await upstream.send(data)
-                        else:
-                            text = msg.get("text")
-                            if text is not None:
-                                await upstream.send(text)
-                except (WebSocketDisconnect, Exception):
-                    return
-
-            async def upstream_to_client() -> None:
-                try:
-                    async for message in upstream:
-                        if isinstance(message, (bytes, bytearray)):
-                            await ws.send_bytes(bytes(message))
-                        else:
-                            await ws.send_text(message)
-                except Exception:
-                    return
-
-            done, pending = await asyncio.wait(
-                {
-                    asyncio.create_task(client_to_upstream()),
-                    asyncio.create_task(upstream_to_client()),
-                },
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-    except (websockets.exceptions.WebSocketException, OSError) as exc:
-        log.info("gateway ws upstream failed: %s", type(exc).__name__)
-        await ws.close(code=1014, reason="upstream unavailable")
-        return
-    finally:
+    if not _ws_guard.acquire():
+        log.warning("ws gateway: connection cap reached (%d active) — rejecting",
+                    _ws_guard.active)
         try:
-            await ws.close()
+            await ws.close(code=1013, reason="try again later")
         except Exception:
             pass
+        return
+    try:
+        try:
+            target = await _resolve_endpoint(ws, token)
+        except Exception as _exc:
+            import traceback as _tb
+
+            log.error("WS resolve failed: %s | %s", _exc, _tb.format_exc()[-400:])
+            target = None
+        if target is None:
+            await ws.close(code=1008, reason="unknown or inactive instance endpoint")
+            return
+        if target.get("stopped"):
+            # instance exists but is restarting — "try again", not "go away"
+            await ws.close(code=1013, reason="instance restarting")
+            return
+
+        # Build the upstream ws URL through the worker's websocket proxy
+        # (separate route from the HTTP /proxy path).
+        worker_ws = target["worker_url"].replace("http://", "ws://").replace("https://", "wss://").rstrip("/")
+        from ..config import settings as _settings
+
+        upstream_url = (
+            f"{worker_ws}/worker/api/instances/{target['instance_id']}/ws-proxy/{path}"
+            f"?token={_settings.worker_token}"
+        )
+
+        # Forward selected client headers so Core sees the real client IP etc.
+        client_headers = {}
+        for key in ("x-forwarded-for", "x-real-ip", "user-agent"):
+            val = ws.headers.get(key)
+            if val:
+                client_headers[key] = val
+        client_headers["x-emunel-endpoint"] = token
+
+        try:
+            async with websockets.connect(
+                upstream_url,
+                additional_headers=client_headers,  # type: ignore[arg-type]
+                max_size=_WS_MAX_FRAME_BYTES,   # was None — unbounded frame buffer
+                max_queue=32,                    # bounded inbound frame queue
+                write_limit=1024 * 1024,          # bufferedAmount cap (task 6)
+                ping_interval=20,
+                ping_timeout=20,
+                close_timeout=5,
+            ) as upstream:
+                async def client_to_upstream() -> None:
+                    try:
+                        while True:
+                            msg = await ws.receive()
+                            if msg["type"] == "websocket.disconnect":
+                                return
+                            data = msg.get("bytes")
+                            if data is not None:
+                                await _bounded_send(upstream.send(data))
+                            else:
+                                text = msg.get("text")
+                                if text is not None:
+                                    await _bounded_send(upstream.send(text))
+                    except (WebSocketDisconnect, Exception):
+                        return
+
+                async def upstream_to_client() -> None:
+                    try:
+                        async for message in upstream:
+                            if isinstance(message, (bytes, bytearray)):
+                                await _bounded_send(ws.send_bytes(bytes(message)))
+                            else:
+                                await _bounded_send(ws.send_text(message))
+                    except Exception:
+                        return
+
+                done, pending = await asyncio.wait(
+                    {asyncio.create_task(client_to_upstream()),
+                     asyncio.create_task(upstream_to_client())},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    # actually release those tasks' resources before we
+                    # return (cancel() alone left them half-open)
+                    await asyncio.gather(*pending, return_exceptions=True)
+        except (websockets.exceptions.WebSocketException, OSError) as exc:
+            log.info("gateway ws upstream failed: %s", type(exc).__name__)
+            await ws.close(code=1014, reason="upstream unavailable")
+            return
+        finally:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+    finally:
+        _ws_guard.release()

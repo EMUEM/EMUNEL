@@ -242,3 +242,37 @@ PAYLOAD_MERGED=true           # Coalesce+Compress (+EMUNEL_HTTP_COMPRESS_MIN_BYT
 
 Turn one flag on, watch Engine Settings (each child shows
 `inside <Module>` with its own status/reason), then the next.
+
+---
+
+# v1.4.1 — Reconnect-storm & OOM hotfix (WS lifecycle / stream-up 404)
+
+## What the Railway logs showed, and the real mechanisms
+
+| Symptom | Root cause found in code | Fix |
+|---|---|---|
+| `stream-up` GET+POST → 404 flood | The **console gateway** returned 404 for BOTH "instance deleted" and "instance exists but not running" (restart/crash/OOM). xHTTP clients treat 404 as "endpoint gone" and reconnect with zero backoff | `_resolve_endpoint` now distinguishes the two: stopped → **503 + Retry-After: 5** (and WS close **1013**), unknown → 404 (WS **1008**). Non-browser clients get a ~30-byte body instead of the HTML page |
+| WebSocket count grows, never drains | Relay tasks were `cancel()`ed but **never awaited** (half-open upstreams); upstream websockets had `max_size=None` and no write bound; worker built a **fresh httpx.AsyncClient per proxied request**, whose BackgroundTask cleanup does NOT run on client disconnect → every aborted stream leaked a client+pool (unbounded RSS) | Pending relay tasks awaited (`gather(return_exceptions=True)`); upstream sockets get `max_size`/`max_queue`/`write_limit` + every relay send wrapped in `asyncio.wait_for` (websockets 16 has no `write_timeout` kwarg — that regression was caught by the passthrough suite); worker uses **one shared bounded client per Core port**; response streaming wrapped in try/finally generators so `aclose()` ALWAYS runs |
+| CPU heat | accept→resolve→close cycles thousands/min during the storm | uvicorn `limit_concurrency` (default 512, `EMUNEL_LIMIT_CONCURRENCY`), WS cap, tiny 404/503 bodies, negative endpoint cache unchanged (4 s) |
+| OOM kills the UI with the engine | Everything shared one process; the memory guard only trimmed caches | **Emergency engine shed**: after `EMUNEL_MEM_EMERGENCY_STOPS` (2) consecutive hard RSS ticks the engines layer stops itself, pipelines go empty, the panel (UI+API) keeps serving; re-enable from Engine Settings. Cores were already separate processes |
+| No visibility | — | 30 s monitor line: console `mem: rss=…MB state=… asyncio_tasks=… gc=(…) ws_conns=…`; worker `monitor: rss=… fds=… tasks=… ws_active=… core_clients=…` |
+
+## The operational root cause (no code can fix it)
+
+Every Railway redeploy on an **ephemeral filesystem wipes the SQLite DB** →
+all endpoint tokens vanish → every client with a saved config hammers the
+domain with 404s. The panel now survives this gracefully; making it stop
+entirely requires the **Volume at `/data`** (see RAILWAY.md).
+
+## New knobs
+
+`EMUNEL_WS_MAX_CONNECTIONS` (60) · `EMUNEL_WS_MAX_FRAME_BYTES` (4 MiB) ·
+`EMUNEL_WS_WRITE_TIMEOUT` (10 s) · `EMUNEL_ENGINE_BACKPRESSURE_TIMEOUT` (15 s) ·
+`EMUNEL_LIMIT_CONCURRENCY` (512, 0=off) · `EMUNEL_MONITOR_SEC` (30) ·
+`EMUNEL_MEM_EMERGENCY_STOPS` (2)
+
+Tests: `tests/test_ws_storm_fixes.py` (22) — statuses/close codes, cap,
+relay teardown, shared clients, abort-cleanup, backpressure timeout,
+zero-frame feedback skip, emergency shed + panel restart, monitor line.
+Full suite: 320 passed + 13 subtests (was 298+13). Core/ and the panel UI
+files are untouched (git diff empty on both).

@@ -58,6 +58,89 @@ if not WORKER_TOKEN:
 driver: BaseDriver
 app = FastAPI(title="EMUNEL Worker", docs_url=False, redoc_url=False)
 
+# ── storm hardening (reconnect-loop / OOM fix) ──────────────────────────────
+# The proxy used to build a FRESH httpx.AsyncClient per request and rely on
+# a Starlette BackgroundTask for cleanup. BackgroundTask does NOT run when
+# the client disconnects mid-stream (the response coroutine is cancelled),
+# so every aborted xHTTP/WS stream leaked a client + its connection pool —
+# unbounded RSS growth under client reconnect storms. Two fixes:
+#   * one shared bounded client per Core port (pool caps, loopback only)
+#   * response streaming wrapped in a try/finally generator so aclose()
+#     ALWAYS runs, on the normal AND the cancelled path
+_CORE_CLIENT_LIMITS = httpx.Limits(max_connections=32, max_keepalive_connections=8)
+_core_clients: "dict[int, httpx.AsyncClient]" = {}
+
+
+def _core_client(port: int) -> httpx.AsyncClient:
+    """Shared bounded client for one Core's loopback port."""
+    client = _core_clients.get(port)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{port}",
+            timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
+            limits=_CORE_CLIENT_LIMITS,
+        )
+        _core_clients[port] = client
+    return client
+
+
+async def _close_core_clients() -> None:
+    for client in list(_core_clients.values()):
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+    _core_clients.clear()
+
+
+def _stream_core(upstream_resp):
+    """aiter_raw wrapped so the upstream response is ALWAYS aclose()'d —
+    BackgroundTask alone skips cleanup on client disconnect (see above)."""
+    async def _gen():
+        try:
+            async for chunk in upstream_resp.aiter_raw():
+                yield chunk
+        finally:
+            try:
+                await upstream_resp.aclose()
+            except Exception:
+                pass
+    return _gen()
+
+
+_WS_MAX_CONNECTIONS = max(0, int(os.environ.get("EMUNEL_WS_MAX_CONNECTIONS", "60")))
+_WS_MAX_FRAME_BYTES = int(os.environ.get("EMUNEL_WS_MAX_FRAME_BYTES", str(4 * 1024 * 1024)))
+_WS_WRITE_TIMEOUT = float(os.environ.get("EMUNEL_WS_WRITE_TIMEOUT", "10"))
+_MONITOR_SEC = float(os.environ.get("EMUNEL_MONITOR_SEC", "30"))
+
+
+class _WsGuard:
+    """Cap + counter for live ws-proxy relays (visible in the monitor line)."""
+
+    def __init__(self, cap: int):
+        self.cap = cap
+        self.active = 0
+        self.rejected = 0
+
+    def acquire(self) -> bool:
+        if 0 < self.cap <= self.active:
+            self.rejected += 1
+            return False
+        self.active += 1
+        return True
+
+    def release(self) -> None:
+        self.active = max(0, self.active - 1)
+
+
+_ws_guard = _WsGuard(_WS_MAX_CONNECTIONS)
+
+
+async def _bounded_send(aw) -> None:
+    """Send with a timeout (websockets 16 has no write_timeout kwarg):
+    a peer that stops reading gets cut instead of pinning the relay."""
+    await asyncio.wait_for(aw, timeout=_WS_WRITE_TIMEOUT)
+
 
 def require_worker_token(request: Request) -> None:
     token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
@@ -235,10 +318,9 @@ async def instance_proxy(instance_id: str, path: str, request: Request, _=Depend
         headers.append(("Authorization", f"Bearer {handle.meta['api_token']}"))
     # Stream responses: xHTTP downlinks are long-lived streams that never
     # "complete" — buffering them (client.request) would hang and die.
-    client = httpx.AsyncClient(
-        base_url=f"http://127.0.0.1:{port}",
-        timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
-    )
+    # Shared bounded client per Core port (was: one fresh client PER request,
+    # leaked when the caller disconnected mid-stream).
+    client = _core_client(port)
     try:
         up_req = client.build_request(
             request.method, url, headers=headers,
@@ -248,21 +330,13 @@ async def instance_proxy(instance_id: str, path: str, request: Request, _=Depend
             content=None if request.method in ("GET", "HEAD", "OPTIONS") else request.stream(),
         )
         upstream = await client.send(up_req, stream=True)
-        from starlette.background import BackgroundTask
-
-        async def _cleanup():
-            await upstream.aclose()
-            await client.aclose()
-
         return StreamingResponse(
-            upstream.aiter_raw(),
+            _stream_core(upstream),
             status_code=upstream.status_code,
             headers={k: v for k, v in upstream.headers.items()
                      if k.lower() not in ("content-length", "transfer-encoding", "connection")},
-            background=BackgroundTask(_cleanup),
         )
     except httpx.HTTPError:
-        await client.aclose()
         raise HTTPException(status_code=502, detail="upstream unavailable")
 
 
@@ -276,68 +350,85 @@ async def instance_ws_proxy(ws: WebSocket, instance_id: str, path: str):
     # Accept first so later rejections carry proper close codes instead of
     # Starlette's generic HTTP 403 rejection.
     await ws.accept()
-    token = ws.query_params.get("token", "")
-    if not token or not secrets.compare_digest(token, WORKER_TOKEN):
-        await ws.close(code=1008, reason="unauthorized")
-        return
-    try:
-        status = await driver.status(instance_id)
-    except DriverError:
-        await ws.close(code=1014, reason="unknown instance")
-        return
-    if not status.get("running"):
-        await ws.close(code=1014, reason="instance not running")
-        return
-
-    upstream_url = f"ws://127.0.0.1:{status['port']}/{path}"
-    headers = {k: v for k, v in ws.headers.items()
-               if k.lower() in ("x-forwarded-for", "x-real-ip", "user-agent")}
-    try:
-        async with ws_lib.connect(upstream_url, additional_headers=headers, max_size=None,
-                                  ping_interval=20, ping_timeout=20) as upstream:
-            async def c2u():
-                try:
-                    while True:
-                        msg = await ws.receive()
-                        if msg["type"] == "websocket.disconnect":
-                            return
-                        data = msg.get("bytes")
-                        if data is not None:
-                            await upstream.send(data)
-                        else:
-                            text = msg.get("text")
-                            if text is not None:
-                                await upstream.send(text)
-                except Exception:
-                    return
-
-            async def u2c():
-                try:
-                    async for message in upstream:
-                        if isinstance(message, (bytes, bytearray)):
-                            await ws.send_bytes(bytes(message))
-                        else:
-                            await ws.send_text(message)
-                except Exception:
-                    return
-
-            done, pending = await asyncio.wait(
-                {asyncio.create_task(c2u()), asyncio.create_task(u2c())},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for t in pending:
-                t.cancel()
-    except Exception:
+    if not _ws_guard.acquire():
+        log.warning("ws-proxy: connection cap reached (%d active) — rejecting",
+                    _ws_guard.active)
         try:
-            await ws.close(code=1014, reason="upstream unavailable")
+            await ws.close(code=1013, reason="try again later")
         except Exception:
             pass
         return
+    try:
+        token = ws.query_params.get("token", "")
+        if not token or not secrets.compare_digest(token, WORKER_TOKEN):
+            await ws.close(code=1008, reason="unauthorized")
+            return
+        try:
+            status = await driver.status(instance_id)
+        except DriverError:
+            await ws.close(code=1014, reason="unknown instance")
+            return
+        if not status.get("running"):
+            await ws.close(code=1013, reason="instance not running")
+            return
+
+        upstream_url = f"ws://127.0.0.1:{status['port']}/{path}"
+        headers = {k: v for k, v in ws.headers.items()
+                   if k.lower() in ("x-forwarded-for", "x-real-ip", "user-agent")}
+        try:
+            async with ws_lib.connect(upstream_url, additional_headers=headers,
+                                      max_size=_WS_MAX_FRAME_BYTES, max_queue=32,
+                                      write_limit=1024 * 1024,
+                                      ping_interval=20, ping_timeout=20) as upstream:
+                async def c2u():
+                    try:
+                        while True:
+                            msg = await ws.receive()
+                            if msg["type"] == "websocket.disconnect":
+                                return
+                            data = msg.get("bytes")
+                            if data is not None:
+                                await _bounded_send(upstream.send(data))
+                            else:
+                                text = msg.get("text")
+                                if text is not None:
+                                    await _bounded_send(upstream.send(text))
+                    except Exception:
+                        return
+
+                async def u2c():
+                    try:
+                        async for message in upstream:
+                            if isinstance(message, (bytes, bytearray)):
+                                await _bounded_send(ws.send_bytes(bytes(message)))
+                            else:
+                                await _bounded_send(ws.send_text(message))
+                    except Exception:
+                        return
+
+                done, pending = await asyncio.wait(
+                    {asyncio.create_task(c2u()), asyncio.create_task(u2c())},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    # release their resources before returning (cancel alone
+                    # left them half-open under reconnect storms)
+                    await asyncio.gather(*pending, return_exceptions=True)
+        except Exception:
+            try:
+                await ws.close(code=1014, reason="upstream unavailable")
+            except Exception:
+                pass
+            return
+        finally:
+            try:
+                await ws.close()
+            except Exception:
+                pass
     finally:
-        try:
-            await ws.close()
-        except Exception:
-            pass
+        _ws_guard.release()
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +477,32 @@ async def heartbeat_loop() -> None:
             await asyncio.sleep(HEARTBEAT_INTERVAL)
 
 
+async def monitor_loop() -> None:
+    """Memory/conn heartbeat (default 30s) — one Railway log line per tick.
+
+    Python has no V8 heap counters; the honest equivalents here are RSS
+    (psutil), live asyncio tasks, open file descriptors and the WS relay
+    count. A leak shows up as rss/tasks/ws climbing tick over tick."""
+    while True:
+        await asyncio.sleep(_MONITOR_SEC)
+        try:
+            proc = psutil.Process()
+            mem = proc.memory_info()
+            try:
+                fds = proc.num_fds()
+            except Exception:
+                fds = -1
+            log.info(
+                "monitor: rss=%.0fMB vms=%.0fMB fds=%d threads=%d "
+                "asyncio_tasks=%d ws_active=%d ws_rejected=%d core_clients=%d",
+                mem.rss / 1048576, mem.vms / 1048576, fds, proc.num_threads(),
+                len(asyncio.all_tasks()), _ws_guard.active, _ws_guard.rejected,
+                len(_core_clients),
+            )
+        except Exception:
+            pass
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     global driver
@@ -394,6 +511,12 @@ async def _startup() -> None:
     log.info("EMUNEL Worker %s on node=%s region=%s driver=%s", worker_info()["version"], NODE_ID, NODE_REGION, driver.name)
     asyncio.create_task(heartbeat_loop())
     asyncio.create_task(_relaunch_known_instances())
+    asyncio.create_task(monitor_loop())
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    await _close_core_clients()
 
 
 async def _relaunch_known_instances() -> None:

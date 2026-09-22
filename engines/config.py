@@ -144,6 +144,7 @@ class EngineEnv:
     soft_mem_mb: float = 380.0                   # EMUNEL_SOFT_MEM_MB
     hard_mem_mb: float = 460.0                   # EMUNEL_HARD_MEM_MB
     mem_check_sec: float = 30.0                  # EMUNEL_MEM_CHECK_SEC
+    mem_emergency_stops: int = 2                 # EMUNEL_MEM_EMERGENCY_STOPS
     # backups (spec 1.3 — cron every 6h, keep 7 rotating copies)
     backup_interval_h: float = 6.0               # EMUNEL_BACKUP_INTERVAL_H
     backup_keep: int = 7                         # EMUNEL_BACKUP_KEEP
@@ -176,6 +177,9 @@ class EngineEnv:
     coalesce_max_size: int = 16384             # MAX_COALESCE_SIZE
     coalesce_timeout_ms: int = 8              # COALESCE_TIMEOUT_MS
     coalesce_max_buffer: int = 262144
+    # how long a stalled downlink client may pin the relay with a full
+    # coalescing buffer before the connection is dropped (backpressure)
+    backpressure_timeout_s: float = 15.0      # EMUNEL_ENGINE_BACKPRESSURE_TIMEOUT
 
     # ── Morphing ───────────────────────────────────────────────────────────
     morph_default_chunk: int = 16384
@@ -405,6 +409,7 @@ def parse_env(host: str = "console") -> EngineEnv:
         soft_mem_mb=max(64.0, _float("EMUNEL_SOFT_MEM_MB", 380.0)),
         hard_mem_mb=max(96.0, _float("EMUNEL_HARD_MEM_MB", 460.0)),
         mem_check_sec=max(5.0, _float("EMUNEL_MEM_CHECK_SEC", 30.0)),
+        mem_emergency_stops=max(1, _int("EMUNEL_MEM_EMERGENCY_STOPS", 2)),
         backup_interval_h=max(0.25, _float("EMUNEL_BACKUP_INTERVAL_H", 6.0)),
         backup_keep=max(1, _int("EMUNEL_BACKUP_KEEP", 7)),
         backup_max_mb=max(1.0, _float("EMUNEL_BACKUP_MAX_MB", 64.0)),
@@ -449,6 +454,7 @@ def parse_env(host: str = "console") -> EngineEnv:
         coalesce_max_size=_int("MAX_COALESCE_SIZE", 16384),
         coalesce_timeout_ms=_int("COALESCE_TIMEOUT_MS", 8),
         coalesce_max_buffer=_int("EMUNEL_ENGINE_COALESCE_MAX_BUFFER", 262144),
+        backpressure_timeout_s=max(1.0, _float("EMUNEL_ENGINE_BACKPRESSURE_TIMEOUT", 15.0)),
 
         morph_default_chunk=_int("EMUNEL_MORPH_DEFAULT_CHUNK", 16384),
         morph_default_delay_ms=_int("EMUNEL_MORPH_DEFAULT_INTER_DELAY_MS", 0),
